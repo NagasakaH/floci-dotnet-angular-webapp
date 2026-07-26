@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "users": {
+    "user-001": {
+      "name": "Alice",
+      "attributes": {
+        "department": "engineering",
+        "employmentType": "employee",
+        "location": "tokyo"
+      }
+    },
+    "user-002": {
+      "name": "Bob",
+      "attributes": {
+        "department": "sales",
+        "employmentType": "employee",
+        "location": "osaka"
+      }
+    },
+    "user-003": {
+      "name": "Carol",
+      "attributes": {
+        "department": "engineering",
+        "employmentType": "contractor",
+        "location": "tokyo"
+      }
+    }
+  },
+  "userGroups": {
+    "engineering-employees": {
+      "description": "Engineering department employees",
+      "match": {
+        "all": [
+          {
+            "attribute": "department",
+            "operator": "equals",
+            "values": ["engineering"]
+          },
+          {
+            "attribute": "employmentType",
+            "operator": "equals",
+            "values": ["employee"]
+          }
+        ]
+      }
+    },
+    "tokyo-users": {
+      "description": "Explicit and attribute-based Tokyo members",
+      "users": ["user-002"],
+      "match": {
+        "any": [
+          {
+            "attribute": "location",
+            "operator": "equals",
+            "values": ["tokyo"]
+          }
+        ]
+      }
+    }
+  },
+  "accessRightGroups": {
+    "hello-readers": {
+      "description": "Users allowed to read the hello API",
+      "members": {
+        "users": ["user-003"],
+        "userGroups": ["engineering-employees"]
+      },
+      "permissions": [
+        {
+          "actions": ["GET"],
+          "resources": ["/api/hello"]
+        }
+      ]
+    },
+    "tokyo-health-readers": {
+      "description": "Example of an access group using a user group",
+      "members": {
+        "userGroups": ["tokyo-users"]
+      },
+      "permissions": [
+        {
+          "actions": ["GET"],
+          "resources": ["/api/health", "/api/status/*"]
+        }
+      ]
+    }
+  }
+}
+

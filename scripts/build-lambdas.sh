@@ -12,8 +12,14 @@ find "${authorizer_dir}" -mindepth 1 -delete
 
 dotnet publish "${repo_dir}/src/HelloApi/HelloApi.csproj" -c Release -o "${hello_dir}" \
   --disable-build-servers -m:1
-dotnet publish "${repo_dir}/src/ApiAuthorizer/ApiAuthorizer.csproj" -c Release \
-  -o "${authorizer_dir}" --disable-build-servers -m:1
+(
+  cd "${repo_dir}/src/ApiAuthorizer"
+  GOCACHE="${repo_dir}/.cache/go-build" \
+    GOMODCACHE="${repo_dir}/.cache/go-mod" \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags="-s -w" -o "${authorizer_dir}/bootstrap" .
+)
+cp "${repo_dir}/src/ApiAuthorizer/authorization.json" "${authorizer_dir}/authorization.json"
 
 # Stable timestamps keep source_code_hash unchanged when source output is unchanged.
 find "${hello_dir}" "${authorizer_dir}" -type f -exec touch -t 198001010000 {} +

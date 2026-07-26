@@ -5,7 +5,7 @@ variable "hello_lambda_runtime" {
 }
 variable "authorizer_lambda_runtime" {
   type    = string
-  default = "dotnet8"
+  default = "provided.al2023"
 }
 variable "hello_zip" { type = string }
 variable "authorizer_zip" { type = string }

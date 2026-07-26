@@ -4,10 +4,6 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HelloApi", "src\HelloApi\HelloApi.csproj", "{5399A6EB-E04C-42C6-BF8C-1B57D2BD204F}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ApiAuthorizer", "src\ApiAuthorizer\ApiAuthorizer.csproj", "{22DD16D3-7D41-4EE0-883C-4E027C1EA8F8}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ApiAuthorizer.Tests", "tests\ApiAuthorizer.Tests\ApiAuthorizer.Tests.csproj", "{9494708C-882F-45E9-828B-9ABCB952E932}"
-EndProject
 Global
   GlobalSection(SolutionConfigurationPlatforms) = preSolution
     Debug|Any CPU = Debug|Any CPU
@@ -18,13 +14,5 @@ Global
     {5399A6EB-E04C-42C6-BF8C-1B57D2BD204F}.Debug|Any CPU.Build.0 = Debug|Any CPU
     {5399A6EB-E04C-42C6-BF8C-1B57D2BD204F}.Release|Any CPU.ActiveCfg = Release|Any CPU
     {5399A6EB-E04C-42C6-BF8C-1B57D2BD204F}.Release|Any CPU.Build.0 = Release|Any CPU
-    {22DD16D3-7D41-4EE0-883C-4E027C1EA8F8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-    {22DD16D3-7D41-4EE0-883C-4E027C1EA8F8}.Debug|Any CPU.Build.0 = Debug|Any CPU
-    {22DD16D3-7D41-4EE0-883C-4E027C1EA8F8}.Release|Any CPU.ActiveCfg = Release|Any CPU
-    {22DD16D3-7D41-4EE0-883C-4E027C1EA8F8}.Release|Any CPU.Build.0 = Release|Any CPU
-    {9494708C-882F-45E9-828B-9ABCB952E932}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-    {9494708C-882F-45E9-828B-9ABCB952E932}.Debug|Any CPU.Build.0 = Debug|Any CPU
-    {9494708C-882F-45E9-828B-9ABCB952E932}.Release|Any CPU.ActiveCfg = Release|Any CPU
-    {9494708C-882F-45E9-828B-9ABCB952E932}.Release|Any CPU.Build.0 = Release|Any CPU
   EndGlobalSection
 EndGlobal

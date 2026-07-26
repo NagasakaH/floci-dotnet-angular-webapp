@@ -7,4 +7,3 @@
 *.tfplan
 infra/artifacts/
 .DS_Store
-.cache/

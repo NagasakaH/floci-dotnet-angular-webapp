@@ -5,6 +5,7 @@ build:
 
 test:
 	dotnet test --disable-build-servers -m:1
+	cd src/ApiAuthorizer && GOCACHE=$(CURDIR)/.cache/go-build GOMODCACHE=$(CURDIR)/.cache/go-mod go test ./...
 
 up:
 	docker compose up -d --wait

@@ -43,7 +43,7 @@ resource "aws_lambda_function" "authorizer" {
   function_name    = "${var.name_prefix}-authorizer"
   role             = aws_iam_role.lambda.arn
   runtime          = var.authorizer_lambda_runtime
-  handler          = "ApiAuthorizer::ApiAuthorizer.Function::Handler"
+  handler          = "bootstrap"
   filename         = var.authorizer_zip
   source_code_hash = filebase64sha256(var.authorizer_zip)
   timeout          = 15

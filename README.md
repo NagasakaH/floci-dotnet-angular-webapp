@@ -1,13 +1,14 @@
-# Floci + API Gateway + .NET Lambda PoC
+# Floci + API Gateway + Go Authorizer + .NET Lambda PoC
 
 Floci上に、Terraformだけで次の最小構成を作るPoCです。
 
-`API Gateway REST -> TOKEN Lambda Authorizer (.NET 8) -> Hello Lambda (.NET 8)`
+`API Gateway REST -> TOKEN Lambda Authorizer (Go) -> Hello Lambda (.NET 8)`
 
 ## 前提
 
 - Docker / Docker Compose
 - .NET SDK 8
+- Go 1.22+
 - Terraform 1.8+
 - `zip` と `curl`
 
@@ -34,17 +35,88 @@ make smoke
 
 ## ローカル認証
 
-PoC専用トークンは次の形式です。
+PoC専用トークンは次の形式です。トークンにはユーザーIDだけを含め、属性や権限は
+Authorizerに同梱するJSONから取得します。
 
 ```text
-Authorization: Bearer local:<user-id>:<name>:<role>:hello:read
+Authorization: Bearer local:<user-id>
 ```
 
-例: `local:user-001:Alice:reader:hello:read`
+例: `local:user-001`
 
-これはJWTではなく、ローカル結合試験用です。`ITokenValidator` が認証境界なので、
-AWS環境ではCognito/OIDCの署名・issuer・audience・期限を検証する実装へ交換します。
-APIのresource/action認可は `ResourceAuthorizer` に分離しています。
+これはJWTではなく、ローカル結合試験用です。AWS環境ではCognito/OIDCの署名・issuer・
+audience・期限を検証する実装へ交換します。認証後のユーザーIDをJSON認可エンジンへ渡す
+境界は維持します。
+
+## JSONによるAPI認可
+
+[authorization.json](src/ApiAuthorizer/authorization.json)で次の3要素を管理します。
+
+- `users`: 信頼するユーザー名と属性
+- `userGroups`: 個別ユーザーまたは属性条件によるユーザーグループ
+- `accessRightGroups`: 個別ユーザー、ユーザーグループ、属性条件をメンバーとして持つアクセス権グループ
+
+アクセス権はアクセス権グループの`permissions`へHTTP actionとresourceパターンで設定します。
+
+```json
+{
+  "accessRightGroups": {
+    "hello-readers": {
+      "members": {
+        "users": ["user-003"],
+        "userGroups": ["engineering-employees"]
+      },
+      "permissions": [
+        {
+          "actions": ["GET"],
+          "resources": ["/api/hello"]
+        }
+      ]
+    }
+  }
+}
+```
+
+ユーザーグループとアクセス権グループの`match`は複合属性条件を指定できます。
+
+```json
+{
+  "match": {
+    "all": [
+      {
+        "attribute": "department",
+        "operator": "equals",
+        "values": ["engineering"]
+      },
+      {
+        "attribute": "employmentType",
+        "operator": "in",
+        "values": ["employee", "partner"]
+      }
+    ],
+    "any": [
+      {
+        "attribute": "location",
+        "operator": "equals",
+        "values": ["tokyo"]
+      },
+      {
+        "attribute": "project",
+        "operator": "contains",
+        "values": ["hello"]
+      }
+    ]
+  }
+}
+```
+
+`all`は全条件一致、`any`は一つ以上の一致が必要です。両方を指定した場合は
+`all`の全条件と`any`の最低一条件を満たす必要があります。operatorは
+`equals`、`notEquals`、`in`、`contains`、`exists`、`notExists`を利用できます。
+一致するAllow権限がなければデフォルトでDenyします。
+Go Authorizerは外部ライブラリに依存せず、標準ライブラリだけでLambda Runtime APIを
+実装しています。`authorization.json`はLambda成果物へ同梱され、起動時に検証・読込されます。
+JSON変更を反映するにはAuthorizerを再ビルド・再デプロイします。
 
 ## CloudFrontとAPI Gatewayが別ドメインになる点
 
@@ -132,7 +204,7 @@ API GatewayはCloudFrontオリジンを完全一致で許可します。Bearer�
 
 ## ディレクトリ
 
-- `src/ApiAuthorizer`: .NETによる認証・API resource/action認可
+- `src/ApiAuthorizer`: Goによる認証とJSONベースのAPI resource/action認可
 - `src/HelloApi`: API Gateway proxy Lambda
 - `infra/modules/application`: local/AWS共有Terraform Module
 - `infra/local/application`: AWSに接続しないFloci用rootとlocal state
