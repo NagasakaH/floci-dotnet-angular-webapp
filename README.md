@@ -19,6 +19,10 @@ make deploy
 make smoke
 ```
 
+ローカルTerraformは入力変数や `*.tfvars` を使わず、`dev` workspaceの設定を
+`infra/local/application/main.tf` の `workspace_config` から取得します。
+`make deploy` は `dev` workspaceがなければ作成し、以降は自動的に選択します。
+
 成功時のレスポンス例:
 
 ```json
@@ -48,7 +52,7 @@ APIのresource/action認可は `ResourceAuthorizer` に分離しています。
 API Lambdaの `CORS_ALLOW_ORIGIN` にはCloudFrontのオリジンを設定します。
 Terraformは `Authorization` ヘッダーを許可するOPTIONSプリフライトも構築します。
 
-- local: `frontend_origin = "http://localhost:4200"`
+- local `dev` workspace: `frontend_origin = "http://localhost:4200"`
 - AWS: `frontend_origin = "https://<distribution>.cloudfront.net"`
 
 本番では `*` を使用せず、CloudFront URLを完全一致で指定してください。Bearer tokenを
@@ -130,10 +134,26 @@ API GatewayはCloudFrontオリジンを完全一致で許可します。Bearer�
 
 - `src/ApiAuthorizer`: .NETによる認証・API resource/action認可
 - `src/HelloApi`: API Gateway proxy Lambda
-- `infra/modules/api`: local/AWS共有Terraform Module
-- `infra/environments/local`: Floci provider設定
-- `infra/environments/aws`: 実AWS provider設定
+- `infra/modules/application`: local/AWS共有Terraform Module
+- `infra/local/application`: AWSに接続しないFloci用rootとlocal state
+- `infra/aws/application`: 実AWS用rootとS3 backend定義
+- `infra/local/foundation`: 将来のFloci固有基盤
+- `infra/aws/foundation`: 将来のCloudFront/S3/Cognito等のAWS基盤
 - `scripts`: package、deploy、smoke test
+
+Applicationのリソース定義は共通Moduleに置き、Providerとbackendだけを薄いrootで
+分離しています。ローカルのbuild、validate、apply、smoke testはAWS credentialsや
+AWS上のstate backendを必要としません。実AWS側は次のコマンドでAWSへ接続せずに
+構文とProvider schemaを検証できます。
+
+```bash
+terraform -chdir=infra/aws/application init -backend=false
+terraform -chdir=infra/aws/application validate
+```
+
+実デプロイ時だけS3 backend設定とAWS credentialsを指定し、backend初期化後に
+`dev` workspaceを作成・選択します。`default` workspaceからのplan/applyは
+workspace guardが拒否します。
 
 Flociの呼出しURLはLocalStack互換形式
 `/restapis/{api-id}/{stage}/_user_request_/api/hello` を利用します。

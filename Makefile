@@ -19,7 +19,8 @@ down:
 	docker compose down
 
 validate: build
-	terraform -chdir=infra/environments/local init -backend=false
-	terraform -chdir=infra/environments/local validate
-	terraform -chdir=infra/environments/aws init -backend=false
-	terraform -chdir=infra/environments/aws validate
+	terraform -chdir=infra/local/application init -backend=false
+	terraform -chdir=infra/local/application workspace select dev || terraform -chdir=infra/local/application workspace new dev
+	terraform -chdir=infra/local/application validate
+	terraform -chdir=infra/aws/application init -backend=false
+	terraform -chdir=infra/aws/application validate

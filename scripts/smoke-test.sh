@@ -2,7 +2,8 @@
 set -euo pipefail
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-base_url="$(terraform -chdir="${repo_dir}/infra/environments/local" output -raw floci_invoke_url)"
+terraform -chdir="${repo_dir}/infra/local/application" workspace select dev >/dev/null
+base_url="$(terraform -chdir="${repo_dir}/infra/local/application" output -raw floci_invoke_url)"
 token="${FLOCI_TEST_TOKEN:-local:user-001:Alice:reader:hello:read}"
 frontend_origin="${FRONTEND_ORIGIN:-http://localhost:4200}"
 
