@@ -1,0 +1,150 @@
+# Floci + API Gateway + .NET Lambda PoC
+
+Floci上に、Terraformだけで次の最小構成を作るPoCです。
+
+`API Gateway REST -> TOKEN Lambda Authorizer (.NET 8) -> Hello Lambda (.NET 8)`
+
+## 前提
+
+- Docker / Docker Compose
+- .NET SDK 8
+- Terraform 1.8+
+- `zip` と `curl`
+
+## 実行
+
+```bash
+make test
+make deploy
+make smoke
+```
+
+成功時のレスポンス例:
+
+```json
+{"message":"Hello","user":"Alice","userId":"user-001"}
+```
+
+終了は `make down` です。PoCのFloci状態はメモリ上に保持されるため、
+コンテナを再作成するとTerraform管理リソースも再作成されます。
+
+## ローカル認証
+
+PoC専用トークンは次の形式です。
+
+```text
+Authorization: Bearer local:<user-id>:<name>:<role>:hello:read
+```
+
+例: `local:user-001:Alice:reader:hello:read`
+
+これはJWTではなく、ローカル結合試験用です。`ITokenValidator` が認証境界なので、
+AWS環境ではCognito/OIDCの署名・issuer・audience・期限を検証する実装へ交換します。
+APIのresource/action認可は `ResourceAuthorizer` に分離しています。
+
+## CloudFrontとAPI Gatewayが別ドメインになる点
+
+同一ドメインを前提にしていません。AngularはAPI GatewayのURLを環境設定として保持し、
+API Lambdaの `CORS_ALLOW_ORIGIN` にはCloudFrontのオリジンを設定します。
+Terraformは `Authorization` ヘッダーを許可するOPTIONSプリフライトも構築します。
+
+- local: `frontend_origin = "http://localhost:4200"`
+- AWS: `frontend_origin = "https://<distribution>.cloudfront.net"`
+
+本番では `*` を使用せず、CloudFront URLを完全一致で指定してください。Bearer tokenを
+JavaScriptから送るため、Cookieのsame-site共有は前提にしません。将来Cookie認証を使う場合は
+API側のCORS credentials、Cookieの `SameSite=None; Secure`、CSRF対策が別途必要です。
+
+### 本番での認証情報の受け渡し
+
+CloudFront用の認証CookieをAPI Gatewayへ転送する構成にはしません。Cookieは設定された
+ドメインへだけ送信されるため、`*.cloudfront.net` のCookieは
+`*.execute-api.ap-northeast-1.amazonaws.com` へ自動送信されません。
+
+本番ではAngularをOAuth 2.0/OIDCのpublic clientとして扱い、Cognito User Poolの
+Authorization Code Grant + PKCEを利用する想定です。
+
+```text
+Browser
+  |
+  | 1. CloudFrontへアクセス
+  v
+CloudFront / Lambda@Edge等
+  |
+  | CloudFront用Cookieを検証し、静的ファイルへのアクセスを制御
+  v
+Angular
+  |
+  | 2. Cognito /oauth2/authorizeへPKCE付きでリダイレクト
+  | 3. CloudFront URLへAuthorization Codeを返却
+  | 4. AngularがCode + code_verifierをToken Endpointで交換
+  v
+Cognito
+  |
+  | access token / ID token / refresh token
+  v
+Angular
+  |
+  | 5. Authorization: Bearer <access token>
+  v
+API Gateway（CloudFrontとは別ドメイン）
+  |
+  | 6. Lambda AuthorizerがJWTとresource/actionを検証
+  v
+.NET Application Lambda
+```
+
+APIには原則としてID tokenではなくaccess tokenを送ります。AngularはAPI呼出し用の
+HTTP interceptorで次のヘッダーを設定します。
+
+```http
+Authorization: Bearer <Cognito access token>
+```
+
+アクセストークンは可能な限りブラウザのメモリ上で保持し、`localStorage`への長期保存は
+避けます。トークン更新、ログアウト、失効処理はCognito対応OIDCライブラリへ委譲します。
+CloudFront用CookieをHttpOnlyにした場合も、AngularがそのCookieを読み出す必要はありません。
+CloudFrontとAPIは同じCognitoユーザーセッションを利用できますが、それぞれ独立して
+「フロントエンドへ入れるか」と「APIを実行できるか」を判定します。
+
+Lambda Authorizerでは少なくとも以下を検証します。
+
+- JWT署名とCognitoのJWKS
+- `iss`
+- `client_id` / `aud`
+- `exp` / `iat`
+- `token_use == "access"`
+- OAuth scope、Cognito group、role、permission
+- APIのHTTP method、resource、action
+
+Angularから`Authorization`ヘッダーを送るとブラウザがOPTIONSプリフライトを実行するため、
+API GatewayはCloudFrontオリジンを完全一致で許可します。Bearer方式では
+`Access-Control-Allow-Credentials`は使用しません。
+
+参考:
+
+- [Amazon Cognito: Authorization Code Grant with PKCE](https://docs.aws.amazon.com/cognito/latest/developerguide/using-pkce-in-authorization-code.html)
+- [Amazon Cognito: API GatewayとLambda Authorizer](https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-accessing-resources-api-gateway-and-lambda.html)
+
+## ディレクトリ
+
+- `src/ApiAuthorizer`: .NETによる認証・API resource/action認可
+- `src/HelloApi`: API Gateway proxy Lambda
+- `infra/modules/api`: local/AWS共有Terraform Module
+- `infra/environments/local`: Floci provider設定
+- `infra/environments/aws`: 実AWS provider設定
+- `scripts`: package、deploy、smoke test
+
+Flociの呼出しURLはLocalStack互換形式
+`/restapis/{api-id}/{stage}/_user_request_/api/hello` を利用します。
+
+## 現PoCの境界
+
+Angular、S3、CloudFront、Cognito、CloudFront側の認証ゲートは次フェーズです。
+CloudFront認証はLambda@Edge/CloudFront Functionsの実AWS固有挙動を含むため、
+Flociで再現できるロジックと実AWSで確認する統合部分を分けます。
+
+Floci 1.5.33はAPI Gateway integrationの `timeout_milliseconds` を読取時に `0` と返すため、
+2回目以降の `terraform plan` では `0 -> 50` の既知差分が表示されます。これはFlociの
+control-plane互換差分で、API実行には影響しません。ローカルのCORSプリフライトはFlociの
+グローバルCORS機能が先に処理し、同じModuleのOPTIONS設定は実AWSで使用されます。

@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+artifacts_dir="${repo_dir}/infra/artifacts"
+hello_dir="${artifacts_dir}/hello"
+authorizer_dir="${artifacts_dir}/authorizer"
+
+mkdir -p "${hello_dir}" "${authorizer_dir}"
+find "${hello_dir}" -mindepth 1 -delete
+find "${authorizer_dir}" -mindepth 1 -delete
+
+dotnet publish "${repo_dir}/src/HelloApi/HelloApi.csproj" -c Release -o "${hello_dir}" \
+  --disable-build-servers -m:1
+dotnet publish "${repo_dir}/src/ApiAuthorizer/ApiAuthorizer.csproj" -c Release \
+  -o "${authorizer_dir}" --disable-build-servers -m:1
+
+# Stable timestamps keep source_code_hash unchanged when source output is unchanged.
+find "${hello_dir}" "${authorizer_dir}" -type f -exec touch -t 198001010000 {} +
+(cd "${hello_dir}" && zip -q -FS -r ../hello.zip .)
+(cd "${authorizer_dir}" && zip -q -FS -r ../authorizer.zip .)
+
+echo "Lambda packages created under infra/artifacts."

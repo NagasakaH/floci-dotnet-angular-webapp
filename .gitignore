@@ -1,0 +1,10 @@
+**/bin/
+**/obj/
+.cache/
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+infra/artifacts/
+.DS_Store
+.cache/
