@@ -1,0 +1,26 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Noto+Sans+JP:wght@400;600;700;800&display=swap');
+
+:root {
+  --ink: #1d1c1a;
+  --muted: #716f6a;
+  --line: #dedbd5;
+  --soft: #f0eee9;
+  --orange: #de5b2e;
+  --green: #21a86e;
+  --mono: 'DM Mono', monospace;
+  font-family: 'Noto Sans JP', sans-serif;
+  color: var(--ink);
+  background: #f7f5f0;
+  font-synthesis: none;
+}
+* { box-sizing: border-box; }
+body {
+  min-width: 320px; min-height: 100vh; margin: 0;
+  background:
+    radial-gradient(circle at 82% 8%, rgb(222 91 46 / 8%), transparent 27%),
+    linear-gradient(rgb(29 28 26 / 3%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(29 28 26 / 3%) 1px, transparent 1px),
+    #f7f5f0;
+  background-size: auto, 48px 48px, 48px 48px, auto;
+}
+button, a { -webkit-tap-highlight-color: transparent; }

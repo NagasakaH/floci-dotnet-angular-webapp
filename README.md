@@ -202,10 +202,42 @@ API GatewayはCloudFrontオリジンを完全一致で許可します。Bearer�
 - [Amazon Cognito: Authorization Code Grant with PKCE](https://docs.aws.amazon.com/cognito/latest/developerguide/using-pkce-in-authorization-code.html)
 - [Amazon Cognito: API GatewayとLambda Authorizer](https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-accessing-resources-api-gateway-and-lambda.html)
 
+## Angularサンプル画面
+
+Angular 22のサンプル画面から、Floci上のAPI Gateway、Go Authorizer、.NET Lambdaまでを
+ブラウザで確認できます。Node.js 26以上を使用します。
+
+```bash
+# 初回またはpackage-lock.json更新後
+make frontend-install
+
+# FlociとAPIを起動・デプロイ
+make up
+make deploy
+
+# http://localhost:4200 でAngularを起動
+make frontend
+```
+
+`make frontend`はTerraformの`floci_invoke_url` outputから現在のAPI Gateway URLを取得し、
+`frontend/public/config.json`を更新してから開発サーバーを起動します。そのためFlociを
+再作成してAPI IDが変わっても、Angular側のソースを編集する必要はありません。
+
+画面では次のローカル用Bearer tokenを切り替えて認可結果を確認できます。
+
+- Alice (`user-001`): ユーザーグループ経由でAllow
+- Carol (`user-003`): 個別ユーザー権限でAllow
+- Bob (`user-002`): 権限がないためDeny
+
+本番のCognito access tokenとは異なり、`Bearer local:<user-id>`はPoC専用です。
+ブラウザは`localhost:4200`から`localhost:4566`へ別オリジンでアクセスし、
+実装済みのCORSプリフライトと`Authorization`ヘッダー送信も確認します。
+
 ## ディレクトリ
 
 - `src/ApiAuthorizer`: Goによる認証とJSONベースのAPI resource/action認可
 - `src/HelloApi`: API Gateway proxy Lambda
+- `frontend`: Angular 22による認証・認可確認用サンプル画面
 - `infra/modules/application`: local/AWS共有Terraform Module
 - `infra/local/application`: AWSに接続しないFloci用rootとlocal state
 - `infra/aws/application`: 実AWS用rootとS3 backend定義
@@ -232,7 +264,7 @@ Flociの呼出しURLはLocalStack互換形式
 
 ## 現PoCの境界
 
-Angular、S3、CloudFront、Cognito、CloudFront側の認証ゲートは次フェーズです。
+S3、CloudFront、Cognito、CloudFront側の認証ゲートは次フェーズです。
 CloudFront認証はLambda@Edge/CloudFront Functionsの実AWS固有挙動を含むため、
 Flociで再現できるロジックと実AWSで確認する統合部分を分けます。
 

@@ -1,4 +1,4 @@
-.PHONY: build test up deploy smoke down validate
+.PHONY: build test frontend-install frontend frontend-build up deploy smoke down validate
 
 build:
 	./scripts/build-lambdas.sh
@@ -6,6 +6,16 @@ build:
 test:
 	dotnet test --disable-build-servers -m:1
 	cd src/ApiAuthorizer && GOCACHE=$(CURDIR)/.cache/go-build GOMODCACHE=$(CURDIR)/.cache/go-mod go test ./...
+	cd frontend && npm test
+
+frontend-install:
+	cd frontend && npm ci
+
+frontend:
+	./scripts/start-frontend.sh
+
+frontend-build:
+	cd frontend && npm run build
 
 up:
 	docker compose up -d --wait
