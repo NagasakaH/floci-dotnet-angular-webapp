@@ -17,3 +17,8 @@ variable "stage_name" {
   type    = string
   default = "local"
 }
+variable "integration_timeout_milliseconds" {
+  type        = number
+  description = "API Gateway Lambda integration timeout. Floci uses its minimum value; AWS needs enough time for Lambda cold starts."
+  default     = 29000
+}

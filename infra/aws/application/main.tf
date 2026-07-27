@@ -1,10 +1,11 @@
 locals {
   workspace_config = {
     dev = {
-      name_prefix     = "floci-poc-dev"
-      stage_name      = "dev"
-      aws_region      = "ap-northeast-1"
-      frontend_origin = "https://replace-with-cloudfront-domain.invalid"
+      name_prefix                      = "floci-poc-dev"
+      stage_name                       = "dev"
+      aws_region                       = "ap-northeast-1"
+      frontend_origin                  = "https://replace-with-cloudfront-domain.invalid"
+      integration_timeout_milliseconds = 29000
     }
   }
 
@@ -24,12 +25,13 @@ resource "terraform_data" "workspace_guard" {
 }
 
 module "application" {
-  source            = "../../modules/application"
-  name_prefix       = local.config.name_prefix
-  hello_zip         = abspath("${path.module}/../../artifacts/hello.zip")
-  authorizer_zip    = abspath("${path.module}/../../artifacts/authorizer.zip")
-  cors_allow_origin = local.config.frontend_origin
-  stage_name        = local.config.stage_name
+  source                           = "../../modules/application"
+  name_prefix                      = local.config.name_prefix
+  hello_zip                        = abspath("${path.module}/../../artifacts/hello.zip")
+  authorizer_zip                   = abspath("${path.module}/../../artifacts/authorizer.zip")
+  cors_allow_origin                = local.config.frontend_origin
+  stage_name                       = local.config.stage_name
+  integration_timeout_milliseconds = local.config.integration_timeout_milliseconds
 
   depends_on = [terraform_data.workspace_guard]
 }

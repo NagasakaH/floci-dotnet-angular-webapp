@@ -92,7 +92,7 @@ resource "aws_api_gateway_integration" "hello" {
   integration_http_method = "POST"
   type                    = "AWS_PROXY"
   uri                     = aws_lambda_function.hello.invoke_arn
-  timeout_milliseconds    = 50
+  timeout_milliseconds    = var.integration_timeout_milliseconds
 }
 
 resource "aws_api_gateway_method" "hello_options" {
@@ -171,11 +171,13 @@ resource "aws_api_gateway_deployment" "this" {
   rest_api_id = aws_api_gateway_rest_api.this.id
   triggers = {
     redeployment = sha1(jsonencode({
-      method      = aws_api_gateway_method.hello_get.id
-      integration = aws_api_gateway_integration.hello.id
-      authorizer  = aws_api_gateway_authorizer.this.id
-      cors_method = aws_api_gateway_method.hello_options.id
-      cors        = aws_api_gateway_integration_response.hello_options.id
+      method                           = aws_api_gateway_method.hello_get.id
+      integration                      = aws_api_gateway_integration.hello.id
+      authorizer                       = aws_api_gateway_authorizer.this.id
+      cors_method                      = aws_api_gateway_method.hello_options.id
+      cors                             = aws_api_gateway_integration_response.hello_options.id
+      integration_timeout_milliseconds = var.integration_timeout_milliseconds
+      cors_allow_origin                = var.cors_allow_origin
     }))
   }
   lifecycle { create_before_destroy = true }
