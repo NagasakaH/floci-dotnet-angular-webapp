@@ -18,4 +18,5 @@ module "application" {
   cors_allow_origin                = local.config.frontend_origin
   stage_name                       = terraform.workspace
   integration_timeout_milliseconds = 50
+  enable_gateway_responses         = false
 }

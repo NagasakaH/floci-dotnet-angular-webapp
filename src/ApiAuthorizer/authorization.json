@@ -63,7 +63,8 @@
       "description": "Users allowed to read the hello API",
       "members": {
         "users": ["user-003"],
-        "userGroups": ["engineering-employees"]
+        "userGroups": ["engineering-employees"],
+        "identityProviderGroups": ["hello-readers"]
       },
       "permissions": [
         {
@@ -86,4 +87,3 @@
     }
   }
 }
-

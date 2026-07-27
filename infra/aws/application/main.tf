@@ -4,7 +4,6 @@ locals {
       name_prefix                      = "floci-poc-dev"
       stage_name                       = "dev"
       aws_region                       = "ap-northeast-1"
-      frontend_origin                  = "https://replace-with-cloudfront-domain.invalid"
       integration_timeout_milliseconds = 29000
     }
   }
@@ -24,14 +23,29 @@ resource "terraform_data" "workspace_guard" {
   }
 }
 
+data "aws_ssm_parameter" "frontend_origin" {
+  name = "/floci-poc/${terraform.workspace}/frontend-origin"
+}
+
+data "aws_ssm_parameter" "cognito_issuer" {
+  name = "/floci-poc/${terraform.workspace}/cognito-issuer"
+}
+
+data "aws_ssm_parameter" "cognito_client_id" {
+  name = "/floci-poc/${terraform.workspace}/cognito-client-id"
+}
+
 module "application" {
   source                           = "../../modules/application"
   name_prefix                      = local.config.name_prefix
   hello_zip                        = abspath("${path.module}/../../artifacts/hello.zip")
   authorizer_zip                   = abspath("${path.module}/../../artifacts/authorizer.zip")
-  cors_allow_origin                = local.config.frontend_origin
+  cors_allow_origin                = data.aws_ssm_parameter.frontend_origin.value
+  cognito_issuer                   = data.aws_ssm_parameter.cognito_issuer.value
+  cognito_client_id                = data.aws_ssm_parameter.cognito_client_id.value
   stage_name                       = local.config.stage_name
   integration_timeout_milliseconds = local.config.integration_timeout_milliseconds
+  enable_gateway_responses         = true
 
   depends_on = [terraform_data.workspace_guard]
 }

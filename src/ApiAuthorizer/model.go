@@ -48,9 +48,17 @@ type accessRightGroup struct {
 }
 
 type accessGroupMembers struct {
-	Users      []string       `json:"users,omitempty"`
-	UserGroups []string       `json:"userGroups,omitempty"`
-	Match      conditionGroup `json:"match,omitempty"`
+	Users                  []string       `json:"users,omitempty"`
+	UserGroups             []string       `json:"userGroups,omitempty"`
+	IdentityProviderGroups []string       `json:"identityProviderGroups,omitempty"`
+	Match                  conditionGroup `json:"match,omitempty"`
+}
+
+type authenticatedIdentity struct {
+	UserID                 string
+	Name                   string
+	Attributes             map[string]string
+	IdentityProviderGroups []string
 }
 
 // All conditions must match. When Any is non-empty, at least one Any condition

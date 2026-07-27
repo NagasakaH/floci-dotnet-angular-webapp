@@ -65,21 +65,18 @@ func (e authorizationEngine) identity(userID string) (userDefinition, bool) {
 	return user, exists
 }
 
-func (e authorizationEngine) authorize(userID, methodARN string) (bool, []string) {
-	user, exists := e.identity(userID)
-	if !exists {
-		return false, nil
-	}
+func (e authorizationEngine) authorizeIdentity(identity authenticatedIdentity, methodARN string) (bool, []string) {
 	action, resource, ok := parseMethodARN(methodARN)
 	if !ok {
 		return false, nil
 	}
 
-	userGroups := e.resolveUserGroups(userID, user)
+	user := userDefinition{Name: identity.Name, Attributes: identity.Attributes}
+	userGroups := e.resolveUserGroups(identity.UserID, user)
 	accessGroups := make([]string, 0)
 	allowed := false
 	for name, group := range e.config.AccessRightGroups {
-		if !isAccessGroupMember(userID, user, userGroups, group.Members) {
+		if !isAccessGroupMember(identity, userGroups, group.Members) {
 			continue
 		}
 		accessGroups = append(accessGroups, name)
@@ -89,6 +86,16 @@ func (e authorizationEngine) authorize(userID, methodARN string) (bool, []string
 	}
 	sort.Strings(accessGroups)
 	return allowed, accessGroups
+}
+
+func (e authorizationEngine) authorize(userID, methodARN string) (bool, []string) {
+	user, exists := e.identity(userID)
+	if !exists {
+		return false, nil
+	}
+	return e.authorizeIdentity(authenticatedIdentity{
+		UserID: userID, Name: user.Name, Attributes: user.Attributes,
+	}, methodARN)
 }
 
 func (e authorizationEngine) resolveUserGroups(userID string, user userDefinition) map[string]struct{} {
@@ -102,13 +109,17 @@ func (e authorizationEngine) resolveUserGroups(userID string, user userDefinitio
 }
 
 func isAccessGroupMember(
-	userID string,
-	user userDefinition,
+	identity authenticatedIdentity,
 	userGroups map[string]struct{},
 	members accessGroupMembers,
 ) bool {
-	if contains(members.Users, userID) || matchesConditions(user.Attributes, members.Match) {
+	if contains(members.Users, identity.UserID) || matchesConditions(identity.Attributes, members.Match) {
 		return true
+	}
+	for _, group := range members.IdentityProviderGroups {
+		if contains(identity.IdentityProviderGroups, group) {
+			return true
+		}
 	}
 	for _, group := range members.UserGroups {
 		if _, exists := userGroups[group]; exists {

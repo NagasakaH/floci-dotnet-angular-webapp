@@ -3,13 +3,18 @@
     <a class="brand" href="/" aria-label="Floci Lab home">
       <span class="brand-mark">F</span><span>Floci Lab</span>
     </a>
-    <div class="environment"><span class="pulse"></span>Local development</div>
+    <div class="topbar-actions">
+      <div class="environment"><span class="pulse"></span>{{ environmentLabel() }}</div>
+      @if (isAws()) {
+        <a class="logout" href="/auth/logout">ログアウト</a>
+      }
+    </div>
   </header>
 
   <section class="hero">
     <div class="hero-copy">
       <p class="eyebrow">AWS SERVERLESS AUTHORIZATION POC</p>
-      <h1>認証からAPI認可まで、<br /><span>ローカルで確かめる。</span></h1>
+      <h1>認証からAPI認可まで、<br /><span>つなげて確かめる。</span></h1>
       <p class="lead">
         Angularから別オリジンのAPI GatewayへBearer tokenを送り、
         Go Lambda Authorizerによるユーザー・グループ単位の認可を確認できます。
@@ -29,19 +34,32 @@
   <section class="workspace">
     <div class="panel users-panel">
       <div class="section-heading">
-        <div><p class="step">STEP 1</p><h2>ユーザーを選択</h2></div>
-        <span class="token-label">Bearer local:&lt;user-id&gt;</span>
+        <div><p class="step">STEP 1</p><h2>{{ isAws() ? 'ログイン情報' : 'ユーザーを選択' }}</h2></div>
+        <span class="token-label">{{ isAws() ? 'Cognito access token' : 'Bearer local:user-id' }}</span>
       </div>
-      <div class="user-list">
-        @for (user of users; track user.id) {
-          <button class="user-card" [class.selected]="selectedUserId() === user.id" (click)="selectUser(user.id)">
-            <span class="avatar">{{ user.initials }}</span>
-            <span class="user-copy"><strong>{{ user.name }}</strong><small>{{ user.id }} · {{ user.department }}</small></span>
-            <span class="permission" [class.denied]="user.expected === 'deny'">{{ user.permissionSource }}</span>
+      @if (isAws()) {
+        @if (authSession(); as session) {
+          <div class="user-card selected aws-user">
+            <span class="avatar">{{ session.username.slice(0, 2).toUpperCase() }}</span>
+            <span class="user-copy"><strong>{{ session.username }}</strong><small>Cognito authenticated user</small></span>
+            <span class="permission">{{ session.groups.length ? session.groups.join(', ') : 'アクセス権グループなし' }}</span>
             <span class="radio"></span>
-          </button>
+          </div>
+        } @else {
+          <p class="placeholder">{{ authLoading() ? 'Cognitoセッションを確認中…' : 'ログイン情報を取得できませんでした。' }}</p>
         }
-      </div>
+      } @else {
+        <div class="user-list">
+          @for (user of users; track user.id) {
+            <button class="user-card" [class.selected]="selectedUserId() === user.id" (click)="selectUser(user.id)">
+              <span class="avatar">{{ user.initials }}</span>
+              <span class="user-copy"><strong>{{ user.name }}</strong><small>{{ user.id }} · {{ user.department }}</small></span>
+              <span class="permission" [class.denied]="user.expected === 'deny'">{{ user.permissionSource }}</span>
+              <span class="radio"></span>
+            </button>
+          }
+        </div>
+      }
     </div>
 
     <div class="panel request-panel">
@@ -51,10 +69,10 @@
       </div>
       <div class="request-preview">
         <p>/api/hello</p>
-        <code>Authorization: Bearer local:{{ selectedUser().id }}</code>
+        <code>Authorization: Bearer {{ isAws() ? '&lt;Cognito access token&gt;' : 'local:' + selectedUser().id }}</code>
         <small>{{ apiBaseUrl() || '設定を読み込み中…' }}</small>
       </div>
-      <button class="execute" (click)="callHelloApi()" [disabled]="loading() || !apiBaseUrl()">
+      <button class="execute" (click)="callHelloApi()" [disabled]="loading() || !apiBaseUrl() || (isAws() && !authSession())">
         @if (loading()) { <span class="spinner"></span> Authorizerで検証中… }
         @else { APIを呼び出す <span>→</span> }
       </button>

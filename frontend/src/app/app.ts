@@ -19,6 +19,13 @@ interface HelloResponse {
   user: string;
 }
 
+interface AuthSession {
+  accessToken: string;
+  expiresAt: number;
+  username: string;
+  groups: string[];
+}
+
 @Component({
   selector: 'app-root',
   templateUrl: './app.html',
@@ -38,15 +45,42 @@ export class App implements OnInit {
     () => this.users.find((user) => user.id === this.selectedUserId()) ?? this.users[0],
   );
   protected readonly apiBaseUrl = signal('');
+  protected readonly authSession = signal<AuthSession | null>(null);
+  protected readonly isAws = computed(
+    () => this.apiBaseUrl() !== '' && !this.apiBaseUrl().includes('localhost'),
+  );
+  protected readonly environmentLabel = computed(() =>
+    this.isAws() ? 'AWS development' : 'Local development',
+  );
   protected readonly loading = signal(false);
+  protected readonly authLoading = signal(false);
   protected readonly result = signal<HelloResponse | null>(null);
   protected readonly errorMessage = signal('');
   protected readonly httpStatus = signal<number | null>(null);
 
   ngOnInit(): void {
     this.http.get<RuntimeConfig>('/config.json').subscribe({
-      next: (config) => this.apiBaseUrl.set(config.apiBaseUrl.replace(/\/$/, '')),
+      next: (config) => {
+        this.apiBaseUrl.set(config.apiBaseUrl.replace(/\/$/, ''));
+        if (this.isAws()) {
+          this.loadAwsSession();
+        }
+      },
       error: () => this.errorMessage.set('config.json を読み込めませんでした。'),
+    });
+  }
+
+  private loadAwsSession(): void {
+    this.authLoading.set(true);
+    this.http.get<AuthSession>('/auth/token').subscribe({
+      next: (session) => {
+        this.authSession.set(session);
+        this.authLoading.set(false);
+      },
+      error: () => {
+        this.errorMessage.set('ログイン情報を取得できませんでした。再ログインしてください。');
+        this.authLoading.set(false);
+      },
     });
   }
 
@@ -68,9 +102,15 @@ export class App implements OnInit {
     this.errorMessage.set('');
     this.httpStatus.set(null);
 
-    const headers = new HttpHeaders({
-      Authorization: `Bearer local:${this.selectedUser().id}`,
-    });
+    const token = this.isAws()
+      ? this.authSession()?.accessToken
+      : `local:${this.selectedUser().id}`;
+    if (!token) {
+      this.errorMessage.set('認証トークンがありません。再ログインしてください。');
+      this.loading.set(false);
+      return;
+    }
+    const headers = new HttpHeaders({ Authorization: `Bearer ${token}` });
 
     this.http
       .get<HelloResponse>(`${this.apiBaseUrl()}/api/hello`, { headers, observe: 'response' })
@@ -83,7 +123,7 @@ export class App implements OnInit {
         error: (error: HttpErrorResponse) => {
           this.httpStatus.set(error.status);
           this.errorMessage.set(
-            error.status === 403
+            error.status === 401 || error.status === 403
               ? 'Authorizerがこのユーザーのアクセスを拒否しました。'
               : `API呼び出しに失敗しました: ${error.message}`,
           );

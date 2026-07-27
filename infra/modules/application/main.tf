@@ -48,7 +48,11 @@ resource "aws_lambda_function" "authorizer" {
   source_code_hash = filebase64sha256(var.authorizer_zip)
   timeout          = 15
   environment {
-    variables = { FUNCTION_KIND = "token-authorizer" }
+    variables = {
+      FUNCTION_KIND     = "token-authorizer"
+      COGNITO_ISSUER    = var.cognito_issuer
+      COGNITO_CLIENT_ID = var.cognito_client_id
+    }
   }
 }
 
@@ -147,8 +151,48 @@ resource "aws_api_gateway_integration_response" "hello_options" {
     "method.response.header.Vary"                         = "'Origin'"
   }
 
-  # Floci currently omits these fields in get-integration-response.
-  lifecycle { ignore_changes = [response_parameters] }
+}
+
+resource "aws_api_gateway_gateway_response" "unauthorized" {
+  count         = var.enable_gateway_responses ? 1 : 0
+  rest_api_id   = aws_api_gateway_rest_api.this.id
+  response_type = "UNAUTHORIZED"
+  status_code   = "401"
+  response_parameters = {
+    "gatewayresponse.header.Access-Control-Allow-Headers" = "'Authorization,Content-Type'"
+    "gatewayresponse.header.Access-Control-Allow-Methods" = "'GET,OPTIONS'"
+    "gatewayresponse.header.Access-Control-Allow-Origin"  = "'${var.cors_allow_origin}'"
+    "gatewayresponse.header.Vary"                         = "'Origin'"
+  }
+  response_templates = {
+    "application/json" = "{\"message\":$context.error.messageString}"
+  }
+}
+
+resource "aws_api_gateway_gateway_response" "access_denied" {
+  count         = var.enable_gateway_responses ? 1 : 0
+  rest_api_id   = aws_api_gateway_rest_api.this.id
+  response_type = "ACCESS_DENIED"
+  status_code   = "403"
+  response_parameters = {
+    "gatewayresponse.header.Access-Control-Allow-Headers" = "'Authorization,Content-Type'"
+    "gatewayresponse.header.Access-Control-Allow-Methods" = "'GET,OPTIONS'"
+    "gatewayresponse.header.Access-Control-Allow-Origin"  = "'${var.cors_allow_origin}'"
+    "gatewayresponse.header.Vary"                         = "'Origin'"
+  }
+  response_templates = {
+    "application/json" = "{\"message\":$context.error.messageString}"
+  }
+}
+
+moved {
+  from = aws_api_gateway_gateway_response.unauthorized
+  to   = aws_api_gateway_gateway_response.unauthorized[0]
+}
+
+moved {
+  from = aws_api_gateway_gateway_response.access_denied
+  to   = aws_api_gateway_gateway_response.access_denied[0]
 }
 
 resource "aws_lambda_permission" "api_hello" {
@@ -178,6 +222,10 @@ resource "aws_api_gateway_deployment" "this" {
       cors                             = aws_api_gateway_integration_response.hello_options.id
       integration_timeout_milliseconds = var.integration_timeout_milliseconds
       cors_allow_origin                = var.cors_allow_origin
+      unauthorized_gateway_response    = try(aws_api_gateway_gateway_response.unauthorized[0].id, "")
+      access_denied_gateway_response   = try(aws_api_gateway_gateway_response.access_denied[0].id, "")
+      cognito_issuer                   = var.cognito_issuer
+      cognito_client_id                = var.cognito_client_id
     }))
   }
   lifecycle { create_before_destroy = true }

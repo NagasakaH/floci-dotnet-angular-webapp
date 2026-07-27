@@ -44,9 +44,8 @@ Authorization: Bearer local:<user-id>
 
 例: `local:user-001`
 
-これはJWTではなく、ローカル結合試験用です。AWS環境ではCognito/OIDCの署名・issuer・
-audience・期限を検証する実装へ交換します。認証後のユーザーIDをJSON認可エンジンへ渡す
-境界は維持します。
+これはJWTではなく、ローカル結合試験用です。AWS環境ではGo AuthorizerがCognito access
+tokenのRS256署名、issuer、client ID、token種別、発行時刻、有効期限を検証します。
 
 ## JSONによるAPI認可
 
@@ -64,7 +63,8 @@ audience・期限を検証する実装へ交換します。認証後のユーザ
     "hello-readers": {
       "members": {
         "users": ["user-003"],
-        "userGroups": ["engineering-employees"]
+        "userGroups": ["engineering-employees"],
+        "identityProviderGroups": ["hello-readers"]
       },
       "permissions": [
         {
@@ -76,6 +76,10 @@ audience・期限を検証する実装へ交換します。認証後のユーザ
   }
 }
 ```
+
+`identityProviderGroups`はCognito access tokenの`cognito:groups`と照合します。
+これによりCognitoのユーザーグループをJSON側のアクセス権グループへ所属させつつ、
+`users`ではCognitoの`sub`を指定して個別ユーザーを直接許可できます。
 
 ユーザーグループとアクセス権グループの`match`は複合属性条件を指定できます。
 
@@ -137,8 +141,8 @@ CloudFront用の認証CookieをAPI Gatewayへ転送する構成にはしませ�
 ドメインへだけ送信されるため、`*.cloudfront.net` のCookieは
 `*.execute-api.ap-northeast-1.amazonaws.com` へ自動送信されません。
 
-本番ではAngularをOAuth 2.0/OIDCのpublic clientとして扱い、Cognito User Poolの
-Authorization Code Grant + PKCEを利用する想定です。
+実装ではLambda@EdgeをOAuth 2.0/OIDCクライアントとして扱い、Cognito User Poolの
+Authorization Code Grant + PKCEを利用します。
 
 ```text
 Browser
@@ -152,36 +156,40 @@ CloudFront / Lambda@Edge等
 Angular
   |
   | 2. Cognito /oauth2/authorizeへPKCE付きでリダイレクト
-  | 3. CloudFront URLへAuthorization Codeを返却
-  | 4. AngularがCode + code_verifierをToken Endpointで交換
+  | 3. CloudFront /auth/callbackへAuthorization Codeを返却
   v
 Cognito
   |
-  | access token / ID token / refresh token
+  | 4. Lambda@EdgeがCode + code_verifierをtokenへ交換
+  | 5. ID/access tokenを検証してHttpOnly Cookieへ保存
   v
 Angular
   |
-  | 5. Authorization: Bearer <access token>
+  | 6. 同一originの /auth/token から短命access tokenを取得
+  | 7. Authorization: Bearer <access token>
   v
 API Gateway（CloudFrontとは別ドメイン）
   |
-  | 6. Lambda AuthorizerがJWTとresource/actionを検証
+  | 8. Go Lambda AuthorizerがJWTとresource/actionを検証
   v
 .NET Application Lambda
 ```
 
-APIには原則としてID tokenではなくaccess tokenを送ります。AngularはAPI呼出し用の
-HTTP interceptorで次のヘッダーを設定します。
+APIにはID tokenではなくaccess tokenを送ります。Angularは次のヘッダーを設定します。
 
 ```http
 Authorization: Bearer <Cognito access token>
 ```
 
-アクセストークンは可能な限りブラウザのメモリ上で保持し、`localStorage`への長期保存は
-避けます。トークン更新、ログアウト、失効処理はCognito対応OIDCライブラリへ委譲します。
-CloudFront用CookieをHttpOnlyにした場合も、AngularがそのCookieを読み出す必要はありません。
+アクセストークンはAngularのメモリ上だけで保持し、`localStorage`や`sessionStorage`には
+保存しません。AngularはHttpOnly Cookieを直接読み取らず、Lambda@Edgeがセッションを
+再検証する同一originの`/auth/token`を通して取得します。CookieはAPI Gatewayへ送らず、
+API Gateway側もCookieを信頼しません。
 CloudFrontとAPIは同じCognitoユーザーセッションを利用できますが、それぞれ独立して
 「フロントエンドへ入れるか」と「APIを実行できるか」を判定します。
+
+現在のaccess/ID token有効期間は1時間です。refresh tokenをブラウザへ公開しない構成のため、
+期限切れ後はCognitoへ再ログインします。
 
 Lambda Authorizerでは少なくとも以下を検証します。
 
@@ -233,6 +241,67 @@ make frontend
 ブラウザは`localhost:4200`から`localhost:4566`へ別オリジンでアクセスし、
 実装済みのCORSプリフライトと`Authorization`ヘッダー送信も確認します。
 
+### AWSへの画面デプロイ
+
+AWSでは`infra/aws/foundation`が非公開S3、CloudFront Origin Access Control、
+CloudFront distributionを管理します。CloudFront URLはSSM Parameter Storeを経由して
+Application StackのCORSへ渡されるため、CloudFrontとAPI Gatewayが別ドメインでも
+AngularからBearer tokenを送信できます。
+
+新規環境ではCloudFront URL確定のためfoundationを2回、続いてapplicationをapplyします。
+その後、次を実行します。
+
+```bash
+make frontend-deploy-aws
+```
+
+このコマンドはAngularをbuildし、Terraform outputからAPI URL、S3 bucket、
+CloudFront distributionを取得して、runtime `config.json`生成、S3同期、
+CloudFront invalidationまで実施します。
+
+CloudFront viewer-requestへLambda@Edgeログインゲートを関連付けています。
+未認証アクセスはCognito managed loginへリダイレクトされ、Authorization Code + PKCEの
+callback後にだけAngularを配信します。
+
+```text
+Browser -> CloudFront -> Lambda@Edge
+                            |
+                            +-- sessionなし -> Cognito /oauth2/authorize
+                            |
+                            +-- /auth/callback
+                            |      +-- state / nonce / PKCE検証
+                            |      +-- codeをtokenへ交換
+                            |      +-- ID/access token署名・claims検証
+                            |      +-- HttpOnly session/access Cookie設定
+                            |
+                            +-- /auth/token -> access tokenをAngularへ一時引渡し
+                            |
+                            +-- sessionあり -> S3 / Angular
+```
+
+Cookieは`Secure; HttpOnly; SameSite=Lax`で、Angularから直接読み取りません。
+Lambda@EdgeはCognito JWKSによるRS256署名と`iss`、`aud`/`client_id`、`token_use`、
+`exp`をリクエストごとに検証します。`/auth/logout`は両Cookieを削除してCognito logoutへ
+遷移します。
+
+API Authorizerはaccess tokenの`cognito:groups`を
+`authorization.json`の`identityProviderGroups`へ照合します。foundationが作成する
+`hello-readers`グループへテストユーザーを追加する例:
+
+```bash
+aws cognito-idp admin-add-user-to-group \
+  --region ap-northeast-1 \
+  --user-pool-id "$(terraform -chdir=infra/aws/foundation output -raw cognito_user_pool_id)" \
+  --username demo@example.com \
+  --group-name hello-readers
+```
+
+Lambda@EdgeはAWS仕様により`us-east-1`へ番号付きversionとして作成し、
+設定値は環境変数ではなくTerraform生成の`config.json`へ同梱します。
+
+テストユーザーはTerraformで管理せず、必要に応じてCognito CLIまたは管理画面から作成します。
+パスワードやユーザー情報をTerraform stateおよびGitへ保存しないためです。
+
 ## ディレクトリ
 
 - `src/ApiAuthorizer`: Goによる認証とJSONベースのAPI resource/action認可
@@ -242,7 +311,8 @@ make frontend
 - `infra/local/application`: AWSに接続しないFloci用rootとlocal state
 - `infra/aws/application`: 実AWS用rootとS3 backend定義
 - `infra/local/foundation`: 将来のFloci固有基盤
-- `infra/aws/foundation`: 将来のCloudFront/S3/Cognito等のAWS基盤
+- `infra/aws/foundation`: S3、CloudFront、Cognito、Lambda@Edgeログインゲート
+- `src/FrontendAuthGate`: CloudFrontログインゲートとNode.js単体テスト
 - `scripts`: package、deploy、smoke test
 
 Applicationのリソース定義は共通Moduleに置き、Providerとbackendだけを薄いrootで
@@ -264,11 +334,14 @@ Flociの呼出しURLはLocalStack互換形式
 
 ## 現PoCの境界
 
-S3、CloudFront、Cognito、CloudFront側の認証ゲートは次フェーズです。
-CloudFront認証はLambda@Edge/CloudFront Functionsの実AWS固有挙動を含むため、
-Flociで再現できるロジックと実AWSで確認する統合部分を分けます。
+CloudFront/S3/Cognito/Lambda@Edgeログインゲートは実AWSへ実装済みです。
+Lambda@Edgeのグローバル複製、Cognito managed login、Cookie統合は実AWSで確認し、
+認証ロジック本体はNode.js単体テストで検証します。これらはFlociの再現対象外です。
 
 Floci 1.5.33はAPI Gateway integrationの `timeout_milliseconds` を読取時に `0` と返すため、
 2回目以降の `terraform plan` では `0 -> 50` の既知差分が表示されます。これはFlociの
 control-plane互換差分で、API実行には影響しません。ローカルのCORSプリフライトはFlociの
 グローバルCORS機能が先に処理し、同じModuleのOPTIONS設定は実AWSで使用されます。
+またFloci 1.5.33は`PutGatewayResponse`を未実装のため、共有Moduleの
+`enable_gateway_responses`をlocal rootだけ`false`にしています。AWSでは`true`とし、
+Authorizerが返す401/403にもCloudFront origin向けCORSヘッダーを設定します。

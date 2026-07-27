@@ -14,15 +14,17 @@ import (
 
 type handler struct {
 	authorization authorizationEngine
+	authenticator tokenAuthenticator
 }
 
 func (h handler) handle(request authorizerRequest) authorizerResponse {
-	userID, authenticated := extractLocalUserID(request.AuthorizationToken)
-	user, userExists := h.authorization.identity(userID)
-	allowed, accessGroups := h.authorization.authorize(userID, request.MethodARN)
-	if !authenticated || !userExists {
-		allowed = false
-		userID = "anonymous"
+	identity, err := h.authenticator.authenticate(request.AuthorizationToken, h.authorization)
+	allowed := false
+	var accessGroups []string
+	if err == nil {
+		allowed, accessGroups = h.authorization.authorizeIdentity(identity, request.MethodARN)
+	} else {
+		identity = authenticatedIdentity{UserID: "anonymous", Name: "Anonymous"}
 	}
 
 	effect := "Deny"
@@ -30,10 +32,10 @@ func (h handler) handle(request authorizerRequest) authorizerResponse {
 		effect = "Allow"
 	}
 	log.Printf("authorization user=%s effect=%s accessGroups=%s resource=%s",
-		userID, effect, strings.Join(accessGroups, ","), request.MethodARN)
+		identity.UserID, effect, strings.Join(accessGroups, ","), request.MethodARN)
 
 	return authorizerResponse{
-		PrincipalID: userID,
+		PrincipalID: identity.UserID,
 		PolicyDocument: policyDocument{
 			Version: "2012-10-17",
 			Statement: []policyStatement{{
@@ -41,8 +43,8 @@ func (h handler) handle(request authorizerRequest) authorizerResponse {
 			}},
 		},
 		Context: map[string]interface{}{
-			"userId":            userID,
-			"user":              user.Name,
+			"userId":            identity.UserID,
+			"user":              identity.Name,
 			"accessRightGroups": strings.Join(accessGroups, ","),
 		},
 	}
@@ -68,11 +70,18 @@ func main() {
 	if err != nil {
 		panic(fmt.Sprintf("initialize authorization engine: %v", err))
 	}
+	authenticator, err := newTokenAuthenticatorFromEnvironment()
+	if err != nil {
+		panic(fmt.Sprintf("initialize token authenticator: %v", err))
+	}
 	runtimeAPI := os.Getenv("AWS_LAMBDA_RUNTIME_API")
 	if runtimeAPI == "" {
 		panic("AWS_LAMBDA_RUNTIME_API is not set")
 	}
-	runRuntime(runtimeAPI, handler{authorization: authorizationEngine{config: config}})
+	runRuntime(runtimeAPI, handler{
+		authorization: authorizationEngine{config: config},
+		authenticator: authenticator,
+	})
 }
 
 // runRuntime implements the AWS Lambda custom runtime HTTP contract using only

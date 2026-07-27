@@ -22,3 +22,18 @@ variable "integration_timeout_milliseconds" {
   description = "API Gateway Lambda integration timeout. Floci uses its minimum value; AWS needs enough time for Lambda cold starts."
   default     = 29000
 }
+variable "cognito_issuer" {
+  type        = string
+  description = "Cognito issuer trusted by the Authorizer. Empty enables local tokens only."
+  default     = ""
+}
+variable "cognito_client_id" {
+  type        = string
+  description = "Cognito app client ID trusted by the Authorizer. Empty enables local tokens only."
+  default     = ""
+}
+variable "enable_gateway_responses" {
+  type        = bool
+  description = "Create API Gateway UNAUTHORIZED/ACCESS_DENIED responses. Disable for emulators that do not implement PutGatewayResponse."
+  default     = true
+}

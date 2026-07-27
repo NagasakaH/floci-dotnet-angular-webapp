@@ -1,6 +1,17 @@
 package main
 
-import "testing"
+import (
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+)
 
 const helloARN = "arn:aws:execute-api:ap-northeast-1:000000000000:id/dev/GET/api/hello"
 
@@ -51,4 +62,64 @@ func TestLocalTokenContainsOnlyUserID(t *testing.T) {
 	if !ok || userID != "user-001" {
 		t.Fatalf("userID=%q ok=%v", userID, ok)
 	}
+}
+
+func TestIdentityProviderGroupGrant(t *testing.T) {
+	identity := authenticatedIdentity{
+		UserID: "cognito-sub", Name: "demo@example.com",
+		IdentityProviderGroups: []string{"hello-readers"},
+	}
+	allowed, groups := testEngine(t).authorizeIdentity(identity, helloARN)
+	if !allowed || !contains(groups, "hello-readers") {
+		t.Fatalf("allowed=%v groups=%v", allowed, groups)
+	}
+}
+
+func TestCognitoAccessTokenAuthentication(t *testing.T) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kid := "test-key"
+	now := time.Now().Unix()
+	claims := map[string]any{
+		"sub": "cognito-sub", "iss": "https://issuer.example", "client_id": "client-id",
+		"token_use": "access", "username": "demo@example.com",
+		"cognito:groups": []string{"hello-readers"}, "iat": now, "exp": now + 300,
+	}
+	token := signTestJWT(t, privateKey, kid, claims)
+	authenticator := tokenAuthenticator{
+		issuer: "https://issuer.example", clientID: "client-id",
+		mu: &sync.Mutex{}, keys: map[string]*rsa.PublicKey{kid: &privateKey.PublicKey},
+	}
+	identity, err := authenticator.authenticate("Bearer "+token, testEngine(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.UserID != "cognito-sub" || !contains(identity.IdentityProviderGroups, "hello-readers") {
+		t.Fatalf("unexpected identity: %#v", identity)
+	}
+	if allowed, _ := testEngine(t).authorizeIdentity(identity, helloARN); !allowed {
+		t.Fatal("Cognito hello-readers member must be allowed")
+	}
+
+	tampered := strings.Split(token, ".")
+	tampered[1] = base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"attacker"}`))
+	if _, err := authenticator.authenticate("Bearer "+strings.Join(tampered, "."), testEngine(t)); err == nil {
+		t.Fatal("tampered token must be rejected")
+	}
+}
+
+func signTestJWT(t *testing.T, privateKey *rsa.PrivateKey, kid string, claims map[string]any) string {
+	t.Helper()
+	header, _ := json.Marshal(map[string]string{"alg": "RS256", "kid": kid})
+	payload, _ := json.Marshal(claims)
+	signingInput := base64.RawURLEncoding.EncodeToString(header) + "." +
+		base64.RawURLEncoding.EncodeToString(payload)
+	digest := sha256.Sum256([]byte(signingInput))
+	signature, err := rsa.SignPKCS1v15(rand.Reader, privateKey, crypto.SHA256, digest[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return signingInput + "." + base64.RawURLEncoding.EncodeToString(signature)
 }
