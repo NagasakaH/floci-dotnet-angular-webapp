@@ -101,6 +101,20 @@
         }
       ]
     },
+    "workflow-users": {
+      "description": "Users allowed to start and inspect their own Step Functions workflows",
+      "members": {
+        "users": ["user-003"],
+        "userGroups": ["engineering-employees"],
+        "identityProviderGroups": ["hello-readers"]
+      },
+      "permissions": [
+        {
+          "actions": ["GET", "POST"],
+          "resources": ["/api/workflow-jobs", "/api/workflow-jobs/*"]
+        }
+      ]
+    },
     "tokyo-health-readers": {
       "description": "Example of an access group using a user group",
       "members": {

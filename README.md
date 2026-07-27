@@ -304,20 +304,74 @@ Floci 1.5.33では`make smoke`により次を実確認しています。
 - 他ユーザー参照と権限なしユーザーuploadの拒否
 - S3の1日ExpirationとDynamoDB TTL
 
+## Step Functionsによる申請ワークフロー
+
+複数Lambdaの順序、分岐、待機、再試行、実行履歴をStep Functionsへ委ねる
+Standard Workflowサンプルを実装しています。API Lambdaを長時間起動したままにせず、
+開始時は`202 Accepted`を返し、実行状態を別APIで取得します。
+
+```text
+Angular
+  | POST /api/workflow-jobs  Authorization: Bearer <token>
+  v
+API Gateway -> Go Authorizer -> Workflow API Lambda (.NET)
+                                      |
+                                      +-- DynamoDBへ所有者と1日TTLを保存
+                                      +-- StartExecution
+                                               |
+                                               v
+                                      Step Functions Standard
+                                               |
+                                               +-- ValidateRequest (.NET Lambda)
+                                               +-- Choice 金額 >= 100,000
+                                               |      |
+                                               |      +-- ReviewDelay (Wait 2秒)
+                                               |      +-- ManualReviewRoute (Pass)
+                                               |
+                                               +-- FastTrackRoute (Pass)
+                                               +-- ProcessRequest (.NET Lambda)
+                                                      Retry + Catch
+
+Angular -- GET /api/workflow-jobs/{jobId} --> status / currentStep / history / output
+```
+
+開始APIの例です。
+
+```http
+POST /api/workflow-jobs
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{"requestType":"purchase-approval","amount":250000}
+```
+
+Go Authorizerは`workflow-users`アクセス権グループと
+`/api/workflow-jobs`のGET/POSTを確認します。Workflow API自身もAuthorizer contextを
+再検証し、状態取得時はDynamoDBの`ownerUserId`が一致しないジョブを`404`にします。
+認証・認可された利用者が任意のState Machine ARNを指定することはできず、Terraformから
+環境変数へ設定した1つのState Machineだけを開始できます。
+
+サンプルでは10万円未満を`FAST_TRACK`、10万円以上を2秒のWaitを含む
+`MANUAL_REVIEW`へ分岐します。Lambda TaskにはStep FunctionsのRetry/Catchを設定し、
+最終結果と通過したState名をAngular画面へ返します。ジョブ所有者メタデータは
+DynamoDB TTLで1日後に削除します。
+
+Floci 1.5.33ではTerraformによるState Machine作成から、Lambda Task、Choice、Wait、
+Pass、StartExecution、DescribeExecution、GetExecutionHistoryまで一気通貫で確認済みです。
+AWSとFlociは同じASL定義とTerraform moduleを利用します。
+
 ### 次に追加しやすいAPIパターン
 
 優先度順では次のサンプルが有用です。
 
-1. **Step Functionsによる複数段処理**: 検索、集計、CSV生成、通知を分け、再試行箇所と
-   実行履歴を明確にする長時間ワークフロー
-2. **WebSocket完了通知**: ポーリングの代わりにAPI Gateway WebSocketで完了イベントを
+1. **WebSocket完了通知**: ポーリングの代わりにAPI Gateway WebSocketで完了イベントを
    pushするパターン。実AWS向けの価値は高い一方、Floci互換性は個別PoCが必要
-3. **Webhook / EventBridge通知**: ブラウザではなく外部システムへ完了を通知し、
+2. **Webhook / EventBridge通知**: ブラウザではなく外部システムへ完了を通知し、
    署名検証、冪等性、再送を確認するパターン
-4. **Athena非同期クエリ**: 大きなS3データをLambdaメモリへ読み込まず検索し、
+3. **Athena非同期クエリ**: 大きなS3データをLambdaメモリへ読み込まず検索し、
    QueryExecutionIdを現在のジョブAPIと同じ形で追跡するパターン
-
-次の一手としては、検索・集計・レポート生成を分割できるStep Functionsサンプルが適しています。
+4. **Step Functions Map / Parallel**: 複数ファイルのfan-out処理や、独立した検査を
+   並列実行して集約するパターン
 
 ## CloudFrontとAPI Gatewayが別ドメインになる点
 
@@ -507,6 +561,7 @@ Lambda@EdgeはAWS仕様により`us-east-1`へ番号付きversionとして作成
 - `src/HelloApi`: API Gateway proxy Lambda
 - `src/SearchJobs`: 非同期検索API、SQS Worker、S3署名URL発行を行う.NET Lambda
 - `src/FileIngest`: 署名付きCSV upload APIとS3 Event Processorを行う.NET Lambda
+- `src/WorkflowJobs`: Step Functions開始・状態取得APIと2つの.NET Lambda Task
 - `frontend`: Angular 22による認証・認可確認用サンプル画面
 - `infra/modules/application`: local/AWS共有Terraform Module
 - `infra/local/application`: AWSに接続しないFloci用rootとlocal state
@@ -548,6 +603,11 @@ CSV uploadはFloci上で署名付きPUT、S3 CORS、S3→SQS Event Notification�
 SQS→Lambda、DynamoDB状態更新、S3レポートdownloadまで確認済みです。
 大容量・高並列時のthroughput、S3 Eventの重複/順序入替を含む長時間試験、
 DLQ/CloudWatch Alarmの運用は実AWSで確認します。
+
+Step FunctionsはFloci上でStandard Workflow、Lambda Task、Choice、Wait、Pass、
+Retry/Catch設定、実行履歴取得まで確認済みです。実AWSではCloudWatch Logs、
+X-Ray tracing、実行数・状態遷移数に対するquota/cost、長時間実行時のアラームを
+追加評価します。
 
 Floci 1.5.33はAPI Gateway integrationの `timeout_milliseconds` を読取時に `0` と返すため、
 2回目以降の `terraform plan` では `0 -> 50` の既知差分が表示されます。これはFlociの

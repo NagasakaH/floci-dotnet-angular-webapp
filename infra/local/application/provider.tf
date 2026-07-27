@@ -13,6 +13,7 @@ provider "aws" {
     lambda     = local.config.floci_endpoint
     s3         = local.config.floci_endpoint
     sqs        = local.config.floci_endpoint
+    sfn        = local.config.floci_endpoint
     sts        = local.config.floci_endpoint
   }
 }

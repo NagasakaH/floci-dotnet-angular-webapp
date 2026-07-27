@@ -16,6 +16,7 @@ import (
 const helloARN = "arn:aws:execute-api:ap-northeast-1:000000000000:id/dev/GET/api/hello"
 const searchARN = "arn:aws:execute-api:ap-northeast-1:000000000000:id/dev/POST/api/search-jobs"
 const fileARN = "arn:aws:execute-api:ap-northeast-1:000000000000:id/dev/POST/api/file-jobs"
+const workflowARN = "arn:aws:execute-api:ap-northeast-1:000000000000:id/dev/POST/api/workflow-jobs"
 
 func testEngine(t *testing.T) authorizationEngine {
 	t.Helper()
@@ -144,6 +145,21 @@ func TestFileIngestPermissions(t *testing.T) {
 	}
 	if allowed, _ := engine.authorize("user-002", fileARN); allowed {
 		t.Fatal("user-002 must not create file ingest jobs")
+	}
+}
+
+func TestWorkflowPermissions(t *testing.T) {
+	engine := testEngine(t)
+	for _, arn := range []string{
+		workflowARN,
+		"arn:aws:execute-api:ap-northeast-1:000000000000:id/dev/GET/api/workflow-jobs/job-1",
+	} {
+		if allowed, groups := engine.authorize("user-001", arn); !allowed || !contains(groups, "workflow-users") {
+			t.Fatalf("arn=%s allowed=%v groups=%v", arn, allowed, groups)
+		}
+	}
+	if allowed, _ := engine.authorize("user-002", workflowARN); allowed {
+		t.Fatal("user-002 must not start workflow jobs")
 	}
 }
 

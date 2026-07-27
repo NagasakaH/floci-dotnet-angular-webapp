@@ -73,6 +73,47 @@ interface FileJobResponse {
   error?: string;
 }
 
+type WorkflowJobStatus =
+  | 'STARTING'
+  | 'RUNNING'
+  | 'SUCCEEDED'
+  | 'FAILED'
+  | 'TIMED_OUT'
+  | 'ABORTED';
+
+interface StartWorkflowResponse {
+  jobId: string;
+  status: WorkflowJobStatus;
+  statusUrl: string;
+}
+
+interface WorkflowHistoryItem {
+  name: string;
+  enteredAt: string;
+}
+
+interface WorkflowOutput {
+  outcome: string;
+  processingLane: string;
+  riskLevel: string;
+  message: string;
+  completedAt: string;
+}
+
+interface WorkflowJobResponse {
+  jobId: string;
+  status: WorkflowJobStatus;
+  requestType: string;
+  amount: number;
+  startedAt?: string;
+  stoppedAt?: string;
+  currentStep?: string;
+  history: WorkflowHistoryItem[];
+  output?: WorkflowOutput;
+  error?: string;
+  cause?: string;
+}
+
 @Component({
   selector: 'app-root',
   templateUrl: './app.html',
@@ -82,6 +123,7 @@ export class App implements OnInit, OnDestroy {
   private readonly http = inject(HttpClient);
   private searchPollTimer?: ReturnType<typeof setTimeout>;
   private filePollTimer?: ReturnType<typeof setTimeout>;
+  private workflowPollTimer?: ReturnType<typeof setTimeout>;
 
   protected readonly users: DemoUser[] = [
     { id: 'user-001', name: 'Alice', initials: 'AL', department: 'Engineering', permissionSource: '開発者グループ', expected: 'allow' },
@@ -115,6 +157,11 @@ export class App implements OnInit, OnDestroy {
   protected readonly filePhase = signal('');
   protected readonly fileJob = signal<FileJobResponse | null>(null);
   protected readonly fileError = signal('');
+  protected readonly workflowRequestType = signal('purchase-approval');
+  protected readonly workflowAmount = signal(250_000);
+  protected readonly workflowLoading = signal(false);
+  protected readonly workflowJob = signal<WorkflowJobResponse | null>(null);
+  protected readonly workflowError = signal('');
 
   ngOnInit(): void {
     this.http.get<RuntimeConfig>('/config.json').subscribe({
@@ -134,6 +181,9 @@ export class App implements OnInit, OnDestroy {
     }
     if (this.filePollTimer) {
       clearTimeout(this.filePollTimer);
+    }
+    if (this.workflowPollTimer) {
+      clearTimeout(this.workflowPollTimer);
     }
   }
 
@@ -160,6 +210,8 @@ export class App implements OnInit, OnDestroy {
     this.searchError.set('');
     this.fileJob.set(null);
     this.fileError.set('');
+    this.workflowJob.set(null);
+    this.workflowError.set('');
   }
 
   protected callHelloApi(): void {
@@ -396,6 +448,82 @@ export class App implements OnInit, OnDestroy {
           },
         });
     }, 800);
+  }
+
+  protected startWorkflow(): void {
+    const requestType = this.workflowRequestType().trim();
+    const amount = this.workflowAmount();
+    const token = this.authenticationToken();
+    if (!this.apiBaseUrl() || !token) {
+      this.workflowError.set('API URLまたは認証トークンがありません。');
+      return;
+    }
+    if (requestType.length < 2 || !Number.isFinite(amount) || amount <= 0) {
+      this.workflowError.set('申請種別と0より大きい金額を入力してください。');
+      return;
+    }
+    if (this.workflowPollTimer) {
+      clearTimeout(this.workflowPollTimer);
+    }
+
+    this.workflowLoading.set(true);
+    this.workflowJob.set(null);
+    this.workflowError.set('');
+    const headers = new HttpHeaders({ Authorization: `Bearer ${token}` });
+    this.http
+      .post<StartWorkflowResponse>(
+        `${this.apiBaseUrl()}/api/workflow-jobs`,
+        { requestType, amount },
+        { headers },
+      )
+      .subscribe({
+        next: (response) => {
+          this.workflowJob.set({
+            jobId: response.jobId,
+            status: response.status,
+            requestType,
+            amount,
+            history: [],
+          });
+          this.pollWorkflow(response.jobId, headers);
+        },
+        error: (error: HttpErrorResponse) => {
+          this.workflowLoading.set(false);
+          this.workflowError.set(
+            error.status === 401 || error.status === 403
+              ? 'このユーザーにはワークフローを実行する権限がありません。'
+              : `ワークフローを開始できませんでした: ${error.message}`,
+          );
+        },
+      });
+  }
+
+  protected setWorkflowAmount(value: string): void {
+    this.workflowAmount.set(Number(value));
+  }
+
+  private pollWorkflow(jobId: string, headers: HttpHeaders): void {
+    this.workflowPollTimer = setTimeout(() => {
+      this.http
+        .get<WorkflowJobResponse>(`${this.apiBaseUrl()}/api/workflow-jobs/${jobId}`, { headers })
+        .subscribe({
+          next: (job) => {
+            this.workflowJob.set(job);
+            if (job.status === 'STARTING' || job.status === 'RUNNING') {
+              this.pollWorkflow(jobId, headers);
+              return;
+            }
+            this.workflowLoading.set(false);
+            if (job.status !== 'SUCCEEDED') {
+              this.workflowError.set(job.cause ?? job.error ?? 'ワークフローが失敗しました。');
+            }
+          },
+          error: (error: HttpErrorResponse) => {
+            this.workflowLoading.set(false);
+            this.workflowError.set(`ワークフロー状態を取得できませんでした: ${error.message}`);
+          },
+        });
+    }, 600);
   }
 
   private authenticationToken(): string | undefined {

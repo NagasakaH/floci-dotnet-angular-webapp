@@ -7,18 +7,22 @@ hello_dir="${artifacts_dir}/hello"
 authorizer_dir="${artifacts_dir}/authorizer"
 search_jobs_dir="${artifacts_dir}/search-jobs"
 file_ingest_dir="${artifacts_dir}/file-ingest"
+workflow_jobs_dir="${artifacts_dir}/workflow-jobs"
 
-mkdir -p "${hello_dir}" "${authorizer_dir}" "${search_jobs_dir}" "${file_ingest_dir}"
+mkdir -p "${hello_dir}" "${authorizer_dir}" "${search_jobs_dir}" "${file_ingest_dir}" "${workflow_jobs_dir}"
 find "${hello_dir}" -mindepth 1 -delete
 find "${authorizer_dir}" -mindepth 1 -delete
 find "${search_jobs_dir}" -mindepth 1 -delete
 find "${file_ingest_dir}" -mindepth 1 -delete
+find "${workflow_jobs_dir}" -mindepth 1 -delete
 
 dotnet publish "${repo_dir}/src/HelloApi/HelloApi.csproj" -c Release -o "${hello_dir}" \
   --disable-build-servers -m:1
 dotnet publish "${repo_dir}/src/SearchJobs/SearchJobs.csproj" -c Release -o "${search_jobs_dir}" \
   --disable-build-servers -m:1
 dotnet publish "${repo_dir}/src/FileIngest/FileIngest.csproj" -c Release -o "${file_ingest_dir}" \
+  --disable-build-servers -m:1
+dotnet publish "${repo_dir}/src/WorkflowJobs/WorkflowJobs.csproj" -c Release -o "${workflow_jobs_dir}" \
   --disable-build-servers -m:1
 (
   cd "${repo_dir}/src/ApiAuthorizer"
@@ -30,7 +34,7 @@ dotnet publish "${repo_dir}/src/FileIngest/FileIngest.csproj" -c Release -o "${f
 cp "${repo_dir}/src/ApiAuthorizer/authorization.json" "${authorizer_dir}/authorization.json"
 
 # Stable timestamps keep source_code_hash unchanged when source output is unchanged.
-find "${hello_dir}" "${authorizer_dir}" "${search_jobs_dir}" "${file_ingest_dir}" \
+find "${hello_dir}" "${authorizer_dir}" "${search_jobs_dir}" "${file_ingest_dir}" "${workflow_jobs_dir}" \
   -type f -exec touch -t 198001010000 {} +
 
 # Recreate archives instead of updating them in place. `zip -FS` compares file
@@ -40,10 +44,12 @@ rm -f \
   "${artifacts_dir}/hello.zip" \
   "${artifacts_dir}/authorizer.zip" \
   "${artifacts_dir}/search-jobs.zip" \
-  "${artifacts_dir}/file-ingest.zip"
+  "${artifacts_dir}/file-ingest.zip" \
+  "${artifacts_dir}/workflow-jobs.zip"
 (cd "${hello_dir}" && zip -q -r ../hello.zip .)
 (cd "${authorizer_dir}" && zip -q -r ../authorizer.zip .)
 (cd "${search_jobs_dir}" && zip -q -r ../search-jobs.zip .)
 (cd "${file_ingest_dir}" && zip -q -r ../file-ingest.zip .)
+(cd "${workflow_jobs_dir}" && zip -q -r ../workflow-jobs.zip .)
 
 echo "Lambda packages created under infra/artifacts."

@@ -17,6 +17,7 @@ module "application" {
   authorizer_zip                   = abspath("${path.module}/../../artifacts/authorizer.zip")
   search_jobs_zip                  = abspath("${path.module}/../../artifacts/search-jobs.zip")
   file_ingest_zip                  = abspath("${path.module}/../../artifacts/file-ingest.zip")
+  workflow_jobs_zip                = abspath("${path.module}/../../artifacts/workflow-jobs.zip")
   authentication_mode              = "local"
   cors_allow_origin                = local.config.frontend_origin
   stage_name                       = terraform.workspace
@@ -40,4 +41,12 @@ output "file_ingest_bucket" {
 
 output "file_jobs_table" {
   value = module.application.file_jobs_table
+}
+
+output "workflow_jobs_table" {
+  value = module.application.workflow_jobs_table
+}
+
+output "workflow_state_machine_arn" {
+  value = module.application.workflow_state_machine_arn
 }

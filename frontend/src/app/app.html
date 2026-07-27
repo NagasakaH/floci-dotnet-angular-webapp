@@ -232,5 +232,89 @@
     </div>
   </section>
 
-  <footer><span>Angular 22</span><span>Node.js 26</span><span>Go Authorizer</span><span>.NET Lambda</span><span>Terraform + Floci</span></footer>
+  <section class="panel async-panel workflow-panel">
+    <div class="section-heading">
+      <div><p class="step">ORCHESTRATION PATTERN</p><h2>Step Functions 申請ワークフロー</h2></div>
+      <span class="method workflow-method">CHOICE → WAIT → TASK</span>
+    </div>
+    <div class="async-grid">
+      <div class="search-form">
+        <label for="workflow-request-type">Choice・Wait・Retry・Lambda Taskを順番に実行</label>
+        <div class="workflow-inputs">
+          <input
+            id="workflow-request-type"
+            type="text"
+            [value]="workflowRequestType()"
+            (input)="workflowRequestType.set($any($event.target).value)"
+            placeholder="purchase-approval"
+          />
+          <label for="workflow-amount">
+            <span>申請金額</span>
+            <input
+              id="workflow-amount"
+              type="number"
+              min="1"
+              max="100000000"
+              step="1000"
+              [value]="workflowAmount()"
+              (input)="setWorkflowAmount($any($event.target).value)"
+            />
+          </label>
+        </div>
+        <button
+          class="execute workflow-execute"
+          (click)="startWorkflow()"
+          [disabled]="workflowLoading() || !apiBaseUrl() || (isAws() && !authSession())"
+        >
+          @if (workflowLoading()) { <span class="spinner"></span> 実行履歴を取得中… }
+          @else { ワークフローを開始 <span>→</span> }
+        </button>
+        <p class="search-note">
+          10万円以上はレビュー経路で2秒待機し、それ未満はFast Trackへ分岐します。
+          APIは実行を開始して202を返し、画面はStep Functionsの実行履歴をポーリングします。
+        </p>
+        <div class="async-flow workflow-flow" aria-label="Step Functions architecture">
+          <span>Validate</span><b>→</b><span>Choice</span><b>→</b><span>Wait / Pass</span><b>→</b>
+          <span>Process</span>
+        </div>
+      </div>
+      <div
+        class="job-status workflow-status"
+        [class.completed]="workflowJob()?.status === 'SUCCEEDED'"
+        [class.failed]="workflowError()"
+      >
+        <div class="response-header">
+          <span>EXECUTION STATUS</span>
+          <strong>{{ workflowJob()?.status || 'WAITING' }}</strong>
+        </div>
+        @if (workflowJob(); as job) {
+          <dl>
+            <div><dt>Job ID</dt><dd>{{ job.jobId }}</dd></div>
+            <div><dt>Request</dt><dd>{{ job.requestType }} · ¥{{ job.amount }}</dd></div>
+            <div><dt>Current</dt><dd>{{ job.currentStep || 'StartExecution' }}</dd></div>
+            @if (job.output) {
+              <div><dt>Route</dt><dd>{{ job.output.processingLane }}</dd></div>
+              <div><dt>Risk</dt><dd>{{ job.output.riskLevel }}</dd></div>
+            }
+          </dl>
+          @if (job.history.length) {
+            <ol class="workflow-history">
+              @for (step of job.history; track step.enteredAt + step.name) {
+                <li><span></span><strong>{{ step.name }}</strong></li>
+              }
+            </ol>
+          }
+        } @else if (workflowError()) {
+          <p class="error">{{ workflowError() }}</p>
+        } @else {
+          <p class="placeholder">申請内容を入力してStandard Workflowを開始してください。</p>
+        }
+        @if (workflowError() && workflowJob()) {
+          <p class="error">{{ workflowError() }}</p>
+        }
+      </div>
+    </div>
+  </section>
+
+  <footer><span>Angular 22</span><span>Node.js 26</span><span>Go Authorizer</span><span>.NET Lambda</span><span>Step Functions</span><span>Terraform + Floci</span></footer>
 </main>

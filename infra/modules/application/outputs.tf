@@ -21,3 +21,11 @@ output "file_ingest_bucket" {
 output "file_jobs_table" {
   value = aws_dynamodb_table.file_jobs.name
 }
+
+output "workflow_jobs_table" {
+  value = aws_dynamodb_table.workflow_jobs.name
+}
+
+output "workflow_state_machine_arn" {
+  value = aws_sfn_state_machine.request_workflow.arn
+}

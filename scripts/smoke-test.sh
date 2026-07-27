@@ -8,6 +8,7 @@ search_bucket="$(terraform -chdir="${repo_dir}/infra/local/application" output -
 search_table="$(terraform -chdir="${repo_dir}/infra/local/application" output -raw search_jobs_table)"
 file_bucket="$(terraform -chdir="${repo_dir}/infra/local/application" output -raw file_ingest_bucket)"
 file_table="$(terraform -chdir="${repo_dir}/infra/local/application" output -raw file_jobs_table)"
+workflow_table="$(terraform -chdir="${repo_dir}/infra/local/application" output -raw workflow_jobs_table)"
 token="${FLOCI_TEST_TOKEN:-local:user-001}"
 frontend_origin="${FRONTEND_ORIGIN:-http://localhost:4200}"
 
@@ -18,7 +19,8 @@ download_headers="$(mktemp)"
 file_report="$(mktemp)"
 upload_headers="$(mktemp)"
 file_auth_response="$(mktemp)"
-trap 'rm -f "${preflight_headers}" "${search_result}" "${download_headers}" "${file_report}" "${upload_headers}" "${file_auth_response}"' EXIT
+workflow_auth_response="$(mktemp)"
+trap 'rm -f "${preflight_headers}" "${search_result}" "${download_headers}" "${file_report}" "${upload_headers}" "${file_auth_response}" "${workflow_auth_response}"' EXIT
 preflight_status="$(curl --silent --output /dev/null --dump-header "${preflight_headers}" \
   --write-out '%{http_code}' -X OPTIONS \
   -H "Origin: ${frontend_origin}" \
@@ -309,3 +311,120 @@ if ! printf '%s' "${file_ttl}" | jq -e \
   exit 1
 fi
 echo "File ingest S3 one-day expiration and DynamoDB TTL are enabled."
+
+echo "Checking Workflow API defense-in-depth authorization..."
+AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=ap-northeast-1 \
+  aws --endpoint-url http://localhost:4566 lambda invoke \
+  --function-name floci-poc-dev-workflow-api \
+  --cli-binary-format raw-in-base64-out \
+  --payload \
+  '{"httpMethod":"POST","body":"{\"requestType\":\"missing-permission\",\"amount\":1000}","requestContext":{"authorizer":{"userId":"synthetic-user","accessRightGroups":"hello-readers"}}}' \
+  "${workflow_auth_response}" >/dev/null
+if ! jq -e \
+  '.statusCode == 403 and (.body | fromjson | .message == "Workflow permission is missing.")' \
+  "${workflow_auth_response}" >/dev/null; then
+  echo "Expected Workflow API to reject an Authorizer context without workflow-users." >&2
+  cat "${workflow_auth_response}" >&2
+  exit 1
+fi
+echo "Workflow API rejected a context without workflow-users."
+
+echo "Checking Step Functions orchestration..."
+workflow_start="$(curl --fail-with-body --silent --show-error \
+  -X POST \
+  -H "Authorization: Bearer ${token}" \
+  -H "Content-Type: application/json" \
+  --data '{"requestType":"purchase-approval","amount":250000}' \
+  "${base_url}/api/workflow-jobs")"
+workflow_job_id="$(printf '%s' "${workflow_start}" | jq -er '.jobId')"
+workflow_state=""
+workflow_response=""
+for _ in {1..30}; do
+  workflow_response="$(curl --fail-with-body --silent --show-error \
+    -H "Authorization: Bearer ${token}" \
+    "${base_url}/api/workflow-jobs/${workflow_job_id}")"
+  workflow_state="$(printf '%s' "${workflow_response}" | jq -er '.status')"
+  if [[ "${workflow_state}" != "STARTING" && "${workflow_state}" != "RUNNING" ]]; then
+    break
+  fi
+  sleep 1
+done
+if [[ "${workflow_state}" != "SUCCEEDED" ]]; then
+  echo "Expected Step Functions workflow to succeed, got ${workflow_state}" >&2
+  printf '%s\n' "${workflow_response}" >&2
+  exit 1
+fi
+if ! printf '%s' "${workflow_response}" | jq -e \
+  '.output.outcome == "APPROVED"
+    and .output.processingLane == "MANUAL_REVIEW"
+    and ([.history[].name] | index("ValidateRequest") != null)
+    and ([.history[].name] | index("ReviewDelay") != null)
+    and ([.history[].name] | index("ProcessRequest") != null)' \
+  >/dev/null; then
+  echo "Step Functions output or execution history was not the expected review route." >&2
+  printf '%s\n' "${workflow_response}" >&2
+  exit 1
+fi
+echo "Workflow ${workflow_job_id} completed through Choice -> Wait -> Lambda Task."
+
+echo "Checking Step Functions fast-track branch..."
+fast_workflow_start="$(curl --fail-with-body --silent --show-error \
+  -X POST \
+  -H "Authorization: Bearer ${token}" \
+  -H "Content-Type: application/json" \
+  --data '{"requestType":"expense-approval","amount":50000}' \
+  "${base_url}/api/workflow-jobs")"
+fast_workflow_job_id="$(printf '%s' "${fast_workflow_start}" | jq -er '.jobId')"
+fast_workflow_state=""
+fast_workflow_response=""
+for _ in {1..30}; do
+  fast_workflow_response="$(curl --fail-with-body --silent --show-error \
+    -H "Authorization: Bearer ${token}" \
+    "${base_url}/api/workflow-jobs/${fast_workflow_job_id}")"
+  fast_workflow_state="$(printf '%s' "${fast_workflow_response}" | jq -er '.status')"
+  if [[ "${fast_workflow_state}" != "STARTING" && "${fast_workflow_state}" != "RUNNING" ]]; then
+    break
+  fi
+  sleep 1
+done
+if ! printf '%s' "${fast_workflow_response}" | jq -e \
+  '.status == "SUCCEEDED"
+    and .output.processingLane == "FAST_TRACK"
+    and ([.history[].name] | index("FastTrackRoute") != null)
+    and ([.history[].name] | index("ReviewDelay") == null)' \
+  >/dev/null; then
+  echo "Step Functions fast-track branch was not the expected route." >&2
+  printf '%s\n' "${fast_workflow_response}" >&2
+  exit 1
+fi
+echo "Workflow ${fast_workflow_job_id} completed through the fast-track branch."
+
+echo "Checking workflow ownership and authorization..."
+other_workflow_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  -H "Authorization: Bearer local:user-003" \
+  "${base_url}/api/workflow-jobs/${workflow_job_id}")"
+if [[ "${other_workflow_status}" != "404" ]]; then
+  echo "Expected another user to receive 404 for the workflow, got ${other_workflow_status}" >&2
+  exit 1
+fi
+denied_workflow_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  -X POST \
+  -H "Authorization: Bearer local:user-002" \
+  -H "Content-Type: application/json" \
+  --data '{"requestType":"denied","amount":1000}' \
+  "${base_url}/api/workflow-jobs")"
+if [[ "${denied_workflow_status}" != "403" ]]; then
+  echo "Expected user without workflow access to receive 403, got ${denied_workflow_status}" >&2
+  exit 1
+fi
+
+workflow_ttl="$(AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=ap-northeast-1 \
+  aws --endpoint-url http://localhost:4566 dynamodb describe-time-to-live \
+  --table-name "${workflow_table}")"
+if ! printf '%s' "${workflow_ttl}" | jq -e \
+  '.TimeToLiveDescription | select(.TimeToLiveStatus == "ENABLED" and .AttributeName == "expiresAt")' \
+  >/dev/null; then
+  echo "Expected workflow job DynamoDB TTL to be enabled." >&2
+  exit 1
+fi
+echo "Workflow ownership, authorization and one-day DynamoDB TTL are enabled."

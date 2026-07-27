@@ -238,6 +238,12 @@ resource "aws_api_gateway_deployment" "this" {
       file_status_method               = aws_api_gateway_method.file_status.id
       file_status_integration          = aws_api_gateway_integration.file_status.id
       file_cors                        = [for item in aws_api_gateway_integration_response.file_options : item.id]
+      workflow_start_method            = aws_api_gateway_method.workflow_start.id
+      workflow_start_integration       = aws_api_gateway_integration.workflow_start.id
+      workflow_status_method           = aws_api_gateway_method.workflow_status.id
+      workflow_status_integration      = aws_api_gateway_integration.workflow_status.id
+      workflow_cors                    = [for item in aws_api_gateway_integration_response.workflow_options : item.id]
+      workflow_definition              = aws_sfn_state_machine.request_workflow.definition
     }))
   }
   lifecycle { create_before_destroy = true }

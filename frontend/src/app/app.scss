@@ -92,6 +92,20 @@ pre i { color: #68768c; font-style: normal; }
 .execute.secondary:hover:not(:disabled) { color: var(--orange); border-color: var(--orange); background: #fff; }
 .ingest-flow b { color: #6f4d83; }
 .report-download { background: #6f4d83; }
+.workflow-method { background: #426b58; }
+.workflow-inputs { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.workflow-inputs > input, .workflow-inputs label { min-width: 0; margin: 0; }
+.workflow-inputs label { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 10px; padding-left: 12px; border: 1px solid var(--line); border-radius: 10px; color: var(--muted); background: #fff; }
+.workflow-inputs label span { font: 10px var(--mono); }
+.workflow-inputs input { min-width: 0; padding: 14px 15px; border: 1px solid var(--line); border-radius: 10px; color: var(--ink); background: #fff; font: 12px var(--mono); outline: none; }
+.workflow-inputs label input { border: 0; border-left: 1px solid var(--line); border-radius: 0 10px 10px 0; }
+.workflow-inputs input:focus { border-color: var(--green); box-shadow: 0 0 0 3px rgb(33 168 110 / 9%); }
+.workflow-execute { margin-bottom: 0; background: #426b58; }
+.workflow-execute:hover:not(:disabled) { background: #345747; }
+.workflow-flow b { color: #426b58; }
+.workflow-history { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 0; padding: 0; list-style: none; }
+.workflow-history li { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 6px; color: #345747; background: #e8f2ed; font: 9px var(--mono); }
+.workflow-history li span { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
 footer { display: flex; justify-content: center; gap: 28px; padding: 36px 0; color: #999690; font: 10px var(--mono); }
 @media (max-width: 900px) {
   .workspace, .async-grid { grid-template-columns: 1fr; }
@@ -106,6 +120,7 @@ footer { display: flex; justify-content: center; gap: 28px; padding: 36px 0; col
   .user-card { grid-template-columns: auto 1fr auto; }
   .search-input-row { grid-template-columns: 1fr; }
   .upload-actions { grid-template-columns: 1fr; }
+  .workflow-inputs { grid-template-columns: 1fr; }
   .search-execute { width: 100%; }
   .async-flow { flex-wrap: wrap; }
   footer { flex-wrap: wrap; gap: 12px 20px; }

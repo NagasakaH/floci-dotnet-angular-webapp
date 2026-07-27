@@ -11,6 +11,7 @@ variable "hello_zip" { type = string }
 variable "authorizer_zip" { type = string }
 variable "search_jobs_zip" { type = string }
 variable "file_ingest_zip" { type = string }
+variable "workflow_jobs_zip" { type = string }
 variable "authentication_mode" {
   type        = string
   description = "Authorizer authentication mode. local accepts only PoC local tokens; cognito accepts only verified Cognito access tokens."
