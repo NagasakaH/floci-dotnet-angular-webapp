@@ -212,23 +212,104 @@ SQS Lambda event source mapping、S3署名URLを実際に構築し、
 - [Amazon S3 presigned URL](https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html)
 - [Amazon S3 Lifecycle Expiration](https://docs.aws.amazon.com/AmazonS3/latest/API/API_LifecycleExpiration.html)
 
+## 署名付きCSVアップロード + S3 Event
+
+非同期検索のdownloadフローと対になる、ブラウザからprivate S3へ直接uploadする
+サンプルも実装しています。API GatewayやLambdaへファイル本体を通さないため、
+APIのpayload上限、Lambdaメモリ、同期処理時間からファイル転送を分離できます。
+
+```text
+Angular
+  | POST /api/file-jobs       Authorization: Bearer <token>
+  v
+API Gateway -> Go Authorizer -> File API Lambda (.NET)
+                                      |
+                                      +-- DynamoDBへWAITING_UPLOADを保存
+                                      +-- 5分間有効なPUT署名URLを返す
+
+Angular -- PUT text/csv --> private S3 uploads/
+                                |
+                                v
+                         S3 Event Notification
+                                |
+                                v
+                               SQS
+                                |
+                                v
+                     File Processor Lambda (.NET)
+                                |
+                                +-- UTF-8 / CSV列数 / 2 MiBを検証
+                                +-- JSON処理レポートをS3 reports/へ保存
+                                +-- DynamoDBをCOMPLETEDへ更新
+
+Angular -- GET /api/file-jobs/{jobId} --> 完了時に5分間有効なreport URL
+```
+
+直接S3からLambdaを起動せずSQSを間に置き、イベントの一時的な集中、Lambda失敗時の再試行、
+DLQへの退避を扱えるようにしています。Flociで互換テストされている
+S3→SQS通知とSQS Lambda event source mappingを組み合わせた構成です。
+
+最初にファイル名だけをAPIへ送ります。
+
+```http
+POST /api/file-jobs
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{"fileName":"employees.csv"}
+```
+
+レスポンスの`uploadUrl`へ、返された`requiredHeaders`を完全一致させてPUTします。
+このサンプルでは`Content-Type: text/csv`も署名対象です。
+
+```json
+{
+  "jobId": "638fc2a66c9044a2b02066dbf4c5631a",
+  "status": "WAITING_UPLOAD",
+  "uploadUrl": "http://localhost:4566/...X-Amz-Expires=300...",
+  "requiredHeaders": {
+    "Content-Type": "text/csv"
+  },
+  "statusUrl": "/api/file-jobs/638fc2a66c9044a2b02066dbf4c5631a"
+}
+```
+
+Angular画面では任意のCSV選択に加え、「サンプルCSVを送信」でファイル選択なしでも
+一連の処理を確認できます。S3 bucketにはCloudFront/Angular originを完全一致で許可する
+PUT専用CORSを設定しています。API用Bearer tokenをS3へ送信してはいけません。
+
+サンプルの検証範囲は、UTF-8、2 MiB以下、100,000行以下、1〜50列、
+各行の列数一致です。ダブルクォートとエスケープされたダブルクォートは扱いますが、
+引用フィールド内の改行を含む完全なRFC 4180 parserではありません。
+
+upload元CSVと処理レポートは同じ一時bucketで1日後にExpirationします。
+DynamoDBメタデータも1日TTLで削除し、APIはジョブ所有者以外へ`404`を返します。
+File APIとProcessorのIAM Roleも分離しています。
+
+Floci 1.5.33では`make smoke`により次を実確認しています。
+
+- 5分PUT署名URLの発行と、別origin PUT用CORSプリフライト
+- 署名URLへのCSV直接upload
+- S3 Event→SQS→.NET Lambda起動
+- 3行・3列のCSV検証とJSONレポート生成
+- 5分GET署名URLによるレポートdownload
+- 他ユーザー参照と権限なしユーザーuploadの拒否
+- S3の1日ExpirationとDynamoDB TTL
+
 ### 次に追加しやすいAPIパターン
 
 優先度順では次のサンプルが有用です。
 
-1. **署名付きupload + S3 Event**: 大きな入力ファイルをAPI Gateway/Lambda経由にせず
-   S3へ直接uploadし、S3 Eventから検証・変換Lambdaを起動するパターン
-2. **Step Functionsによる複数段処理**: 検索、集計、CSV生成、通知を分け、再試行箇所と
+1. **Step Functionsによる複数段処理**: 検索、集計、CSV生成、通知を分け、再試行箇所と
    実行履歴を明確にする長時間ワークフロー
-3. **WebSocket完了通知**: ポーリングの代わりにAPI Gateway WebSocketで完了イベントを
+2. **WebSocket完了通知**: ポーリングの代わりにAPI Gateway WebSocketで完了イベントを
    pushするパターン。実AWS向けの価値は高い一方、Floci互換性は個別PoCが必要
-4. **Webhook / EventBridge通知**: ブラウザではなく外部システムへ完了を通知し、
+3. **Webhook / EventBridge通知**: ブラウザではなく外部システムへ完了を通知し、
    署名検証、冪等性、再送を確認するパターン
-5. **Athena非同期クエリ**: 大きなS3データをLambdaメモリへ読み込まず検索し、
+4. **Athena非同期クエリ**: 大きなS3データをLambdaメモリへ読み込まず検索し、
    QueryExecutionIdを現在のジョブAPIと同じ形で追跡するパターン
 
-次の一手としては、現在のdownloadフローと対になる「署名付きupload + S3 Event」が
-再利用性とFlociでの検証価値のバランスが最も良いです。
+次の一手としては、検索・集計・レポート生成を分割できるStep Functionsサンプルが適しています。
 
 ## CloudFrontとAPI Gatewayが別ドメインになる点
 
@@ -415,6 +496,7 @@ Lambda@EdgeはAWS仕様により`us-east-1`へ番号付きversionとして作成
 - `src/ApiAuthorizer`: Goによる認証とJSONベースのAPI resource/action認可
 - `src/HelloApi`: API Gateway proxy Lambda
 - `src/SearchJobs`: 非同期検索API、SQS Worker、S3署名URL発行を行う.NET Lambda
+- `src/FileIngest`: 署名付きCSV upload APIとS3 Event Processorを行う.NET Lambda
 - `frontend`: Angular 22による認証・認可確認用サンプル画面
 - `infra/modules/application`: local/AWS共有Terraform Module
 - `infra/local/application`: AWSに接続しないFloci用rootとlocal state
@@ -451,6 +533,11 @@ Lambda@Edgeのグローバル複製、Cognito managed login、Cookie統合は実
 S3保存、署名URLダウンロードまで確認済みです。S3 Lifecycleの設定APIも互換ですが、
 実時間経過後の削除タイミング、SQS/Lambdaの大規模並列実行、DLQの運用アラームは
 最終的に実AWSで確認します。
+
+CSV uploadはFloci上で署名付きPUT、S3 CORS、S3→SQS Event Notification、
+SQS→Lambda、DynamoDB状態更新、S3レポートdownloadまで確認済みです。
+大容量・高並列時のthroughput、S3 Eventの重複/順序入替を含む長時間試験、
+DLQ/CloudWatch Alarmの運用は実AWSで確認します。
 
 Floci 1.5.33はAPI Gateway integrationの `timeout_milliseconds` を読取時に `0` と返すため、
 2回目以降の `terraform plan` では `0 -> 50` の既知差分が表示されます。これはFlociの

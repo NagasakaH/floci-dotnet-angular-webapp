@@ -47,6 +47,32 @@ interface SearchJobResponse {
   error?: string;
 }
 
+type FileJobStatus = 'WAITING_UPLOAD' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+
+interface StartFileJobResponse {
+  jobId: string;
+  status: FileJobStatus;
+  uploadUrl: string;
+  uploadExpiresAt: string;
+  requiredHeaders: Record<string, string>;
+  statusUrl: string;
+}
+
+interface FileJobResponse {
+  jobId: string;
+  status: FileJobStatus;
+  fileName: string;
+  createdAt: string;
+  updatedAt: string;
+  sizeBytes: number;
+  rowCount: number;
+  columnCount: number;
+  columns: string[];
+  reportUrl?: string;
+  reportExpiresAt?: string;
+  error?: string;
+}
+
 @Component({
   selector: 'app-root',
   templateUrl: './app.html',
@@ -55,6 +81,7 @@ interface SearchJobResponse {
 export class App implements OnInit, OnDestroy {
   private readonly http = inject(HttpClient);
   private searchPollTimer?: ReturnType<typeof setTimeout>;
+  private filePollTimer?: ReturnType<typeof setTimeout>;
 
   protected readonly users: DemoUser[] = [
     { id: 'user-001', name: 'Alice', initials: 'AL', department: 'Engineering', permissionSource: '開発者グループ', expected: 'allow' },
@@ -83,6 +110,11 @@ export class App implements OnInit, OnDestroy {
   protected readonly searchLoading = signal(false);
   protected readonly searchJob = signal<SearchJobResponse | null>(null);
   protected readonly searchError = signal('');
+  protected readonly selectedFile = signal<File | null>(null);
+  protected readonly fileLoading = signal(false);
+  protected readonly filePhase = signal('');
+  protected readonly fileJob = signal<FileJobResponse | null>(null);
+  protected readonly fileError = signal('');
 
   ngOnInit(): void {
     this.http.get<RuntimeConfig>('/config.json').subscribe({
@@ -99,6 +131,9 @@ export class App implements OnInit, OnDestroy {
   ngOnDestroy(): void {
     if (this.searchPollTimer) {
       clearTimeout(this.searchPollTimer);
+    }
+    if (this.filePollTimer) {
+      clearTimeout(this.filePollTimer);
     }
   }
 
@@ -123,6 +158,8 @@ export class App implements OnInit, OnDestroy {
     this.httpStatus.set(null);
     this.searchJob.set(null);
     this.searchError.set('');
+    this.fileJob.set(null);
+    this.fileError.set('');
   }
 
   protected callHelloApi(): void {
@@ -232,6 +269,130 @@ export class App implements OnInit, OnDestroy {
           error: (error: HttpErrorResponse) => {
             this.searchLoading.set(false);
             this.searchError.set(`検索状態を取得できませんでした: ${error.message}`);
+          },
+        });
+    }, 800);
+  }
+
+  protected selectCsv(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0] ?? null;
+    this.fileJob.set(null);
+    this.fileError.set('');
+    if (file && !file.name.toLowerCase().endsWith('.csv')) {
+      this.selectedFile.set(null);
+      this.fileError.set('CSVファイルを選択してください。');
+      return;
+    }
+    if (file && file.size > 2 * 1024 * 1024) {
+      this.selectedFile.set(null);
+      this.fileError.set('サンプルでは2 MiB以下のCSVを選択してください。');
+      return;
+    }
+    this.selectedFile.set(file);
+  }
+
+  protected uploadSelectedCsv(): void {
+    const file = this.selectedFile();
+    if (!file) {
+      this.fileError.set('アップロードするCSVを選択してください。');
+      return;
+    }
+    this.startFileIngest(file);
+  }
+
+  protected uploadSampleCsv(): void {
+    const csv = [
+      'employeeId,name,department',
+      '1,Alice,engineering',
+      '2,Bob,sales',
+      '3,Carol,operations',
+      '',
+    ].join('\n');
+    this.startFileIngest(new File([csv], 'sample-employees.csv', { type: 'text/csv' }));
+  }
+
+  private startFileIngest(file: File): void {
+    const token = this.authenticationToken();
+    if (!this.apiBaseUrl() || !token) {
+      this.fileError.set('API URLまたは認証トークンがありません。');
+      return;
+    }
+    if (this.filePollTimer) {
+      clearTimeout(this.filePollTimer);
+    }
+
+    this.fileLoading.set(true);
+    this.filePhase.set('署名付きURLを発行中');
+    this.fileJob.set(null);
+    this.fileError.set('');
+    const apiHeaders = new HttpHeaders({ Authorization: `Bearer ${token}` });
+    this.http
+      .post<StartFileJobResponse>(
+        `${this.apiBaseUrl()}/api/file-jobs`,
+        { fileName: file.name },
+        { headers: apiHeaders },
+      )
+      .subscribe({
+        next: (job) => {
+          this.fileJob.set({
+            jobId: job.jobId,
+            status: job.status,
+            fileName: file.name,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            sizeBytes: file.size,
+            rowCount: 0,
+            columnCount: 0,
+            columns: [],
+          });
+          this.filePhase.set('S3へ直接アップロード中');
+          const uploadHeaders = new HttpHeaders(job.requiredHeaders);
+          this.http
+            .put(job.uploadUrl, file, { headers: uploadHeaders, responseType: 'text' })
+            .subscribe({
+              next: () => {
+                this.filePhase.set('S3 Eventの処理を待機中');
+                this.pollFileJob(job.jobId, apiHeaders);
+              },
+              error: (error: HttpErrorResponse) => {
+                this.fileLoading.set(false);
+                this.fileError.set(`S3へアップロードできませんでした: ${error.message}`);
+              },
+            });
+        },
+        error: (error: HttpErrorResponse) => {
+          this.fileLoading.set(false);
+          this.fileError.set(
+            error.status === 401 || error.status === 403
+              ? 'このユーザーにはCSVアップロードを実行する権限がありません。'
+              : `ファイルジョブを開始できませんでした: ${error.message}`,
+          );
+        },
+      });
+  }
+
+  private pollFileJob(jobId: string, headers: HttpHeaders): void {
+    this.filePollTimer = setTimeout(() => {
+      this.http
+        .get<FileJobResponse>(`${this.apiBaseUrl()}/api/file-jobs/${jobId}`, { headers })
+        .subscribe({
+          next: (job) => {
+            this.fileJob.set(job);
+            if (job.status === 'WAITING_UPLOAD' || job.status === 'PROCESSING') {
+              this.pollFileJob(jobId, headers);
+              return;
+            }
+            this.fileLoading.set(false);
+            this.filePhase.set('');
+            if (job.status === 'FAILED') {
+              this.fileError.set(job.error ?? 'CSV処理が失敗しました。');
+            }
+          },
+          error: (error: HttpErrorResponse) => {
+            this.fileLoading.set(false);
+            this.filePhase.set('');
+            this.fileError.set(`ファイル処理状態を取得できませんでした: ${error.message}`);
           },
         });
     }, 800);

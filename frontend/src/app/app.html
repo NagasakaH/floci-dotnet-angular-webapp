@@ -160,5 +160,77 @@
     </div>
   </section>
 
+  <section class="panel async-panel ingest-panel">
+    <div class="section-heading">
+      <div><p class="step">DIRECT UPLOAD PATTERN</p><h2>署名付きCSVアップロードとS3 Event</h2></div>
+      <span class="method upload-method">PRESIGNED PUT → EVENT</span>
+    </div>
+    <div class="async-grid">
+      <div class="search-form">
+        <label for="csv-file">API Gatewayを経由せずprivate S3へ直接アップロード</label>
+        <label class="file-picker" for="csv-file">
+          <input id="csv-file" type="file" accept=".csv,text/csv" (change)="selectCsv($event)" />
+          <span>{{ selectedFile()?.name || 'CSVファイルを選択' }}</span>
+          <small>最大2 MiB</small>
+        </label>
+        <div class="upload-actions">
+          <button
+            class="execute secondary"
+            (click)="uploadSampleCsv()"
+            [disabled]="fileLoading() || !apiBaseUrl() || (isAws() && !authSession())"
+          >
+            サンプルCSVを送信
+          </button>
+          <button
+            class="execute"
+            (click)="uploadSelectedCsv()"
+            [disabled]="fileLoading() || !selectedFile() || !apiBaseUrl() || (isAws() && !authSession())"
+          >
+            @if (fileLoading()) {
+              <span class="spinner"></span><span>{{ filePhase() }}</span>
+            } @else {
+              選択したCSVを送信 <span>→</span>
+            }
+          </button>
+        </div>
+        <p class="search-note">
+          APIは5分間有効なPUT URLだけを発行します。ブラウザがCSVをS3へ直接送信すると、
+          S3 EventがSQSを経由して.NET Processorを起動し、列・行数を検証します。
+        </p>
+        <div class="async-flow ingest-flow" aria-label="direct upload architecture">
+          <span>Angular</span><b>→</b><span>S3</span><b>→</b><span>SQS</span><b>→</b>
+          <span>Processor</span><b>→</b><span>Report</span>
+        </div>
+      </div>
+      <div class="job-status" [class.completed]="fileJob()?.status === 'COMPLETED'" [class.failed]="fileError()">
+        <div class="response-header">
+          <span>FILE JOB STATUS</span>
+          <strong>{{ fileJob()?.status || 'WAITING' }}</strong>
+        </div>
+        @if (fileJob(); as job) {
+          <dl>
+            <div><dt>File</dt><dd>{{ job.fileName }}</dd></div>
+            <div><dt>Size</dt><dd>{{ job.sizeBytes }} bytes</dd></div>
+            <div><dt>Rows</dt><dd>{{ job.rowCount }}</dd></div>
+            <div><dt>Columns</dt><dd>{{ job.columnCount }} · {{ job.columns.join(', ') }}</dd></div>
+          </dl>
+          @if (job.reportUrl) {
+            <a class="download report-download" [href]="job.reportUrl" target="_blank" rel="noopener">
+              JSON処理レポートをダウンロード <span>↗</span>
+            </a>
+            <small class="expiry">URL有効期限: {{ job.reportExpiresAt }}</small>
+          }
+        } @else if (fileError()) {
+          <p class="error">{{ fileError() }}</p>
+        } @else {
+          <p class="placeholder">CSVを選択するか、サンプルCSVを送信してください。</p>
+        }
+        @if (fileError() && fileJob()) {
+          <p class="error">{{ fileError() }}</p>
+        }
+      </div>
+    </div>
+  </section>
+
   <footer><span>Angular 22</span><span>Node.js 26</span><span>Go Authorizer</span><span>.NET Lambda</span><span>Terraform + Floci</span></footer>
 </main>

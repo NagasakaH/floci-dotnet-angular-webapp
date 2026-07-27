@@ -15,6 +15,7 @@ import (
 
 const helloARN = "arn:aws:execute-api:ap-northeast-1:000000000000:id/dev/GET/api/hello"
 const searchARN = "arn:aws:execute-api:ap-northeast-1:000000000000:id/dev/POST/api/search-jobs"
+const fileARN = "arn:aws:execute-api:ap-northeast-1:000000000000:id/dev/POST/api/file-jobs"
 
 func testEngine(t *testing.T) authorizationEngine {
 	t.Helper()
@@ -91,6 +92,21 @@ func TestSearchJobPermissions(t *testing.T) {
 		"arn:aws:execute-api:ap-northeast-1:000000000000:id/dev/POST/api/search-jobs",
 	); allowed {
 		t.Fatal("user-002 must not create search jobs")
+	}
+}
+
+func TestFileIngestPermissions(t *testing.T) {
+	engine := testEngine(t)
+	for _, arn := range []string{
+		fileARN,
+		"arn:aws:execute-api:ap-northeast-1:000000000000:id/dev/GET/api/file-jobs/job-1",
+	} {
+		if allowed, groups := engine.authorize("user-001", arn); !allowed || !contains(groups, "file-ingest-users") {
+			t.Fatalf("arn=%s allowed=%v groups=%v", arn, allowed, groups)
+		}
+	}
+	if allowed, _ := engine.authorize("user-002", fileARN); allowed {
+		t.Fatal("user-002 must not create file ingest jobs")
 	}
 }
 

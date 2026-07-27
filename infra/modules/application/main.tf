@@ -232,6 +232,11 @@ resource "aws_api_gateway_deployment" "this" {
       search_status_integration        = aws_api_gateway_integration.search_status.id
       search_cors                      = [for item in aws_api_gateway_integration_response.search_options : item.id]
       search_worker_mapping            = aws_lambda_event_source_mapping.search_worker.uuid
+      file_start_method                = aws_api_gateway_method.file_start.id
+      file_start_integration           = aws_api_gateway_integration.file_start.id
+      file_status_method               = aws_api_gateway_method.file_status.id
+      file_status_integration          = aws_api_gateway_integration.file_status.id
+      file_cors                        = [for item in aws_api_gateway_integration_response.file_options : item.id]
     }))
   }
   lifecycle { create_before_destroy = true }

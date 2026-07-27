@@ -87,6 +87,20 @@
         }
       ]
     },
+    "file-ingest-users": {
+      "description": "Users allowed to upload CSV files and read their own processing results",
+      "members": {
+        "users": ["user-003"],
+        "userGroups": ["engineering-employees"],
+        "identityProviderGroups": ["hello-readers"]
+      },
+      "permissions": [
+        {
+          "actions": ["GET", "POST"],
+          "resources": ["/api/file-jobs", "/api/file-jobs/*"]
+        }
+      ]
+    },
     "tokyo-health-readers": {
       "description": "Example of an access group using a user group",
       "members": {

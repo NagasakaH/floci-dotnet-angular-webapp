@@ -6,6 +6,8 @@ terraform -chdir="${repo_dir}/infra/local/application" workspace select dev >/de
 base_url="$(terraform -chdir="${repo_dir}/infra/local/application" output -raw floci_invoke_url)"
 search_bucket="$(terraform -chdir="${repo_dir}/infra/local/application" output -raw search_results_bucket)"
 search_table="$(terraform -chdir="${repo_dir}/infra/local/application" output -raw search_jobs_table)"
+file_bucket="$(terraform -chdir="${repo_dir}/infra/local/application" output -raw file_ingest_bucket)"
+file_table="$(terraform -chdir="${repo_dir}/infra/local/application" output -raw file_jobs_table)"
 token="${FLOCI_TEST_TOKEN:-local:user-001}"
 frontend_origin="${FRONTEND_ORIGIN:-http://localhost:4200}"
 
@@ -13,7 +15,9 @@ echo "Checking cross-origin preflight..."
 preflight_headers="$(mktemp)"
 search_result="$(mktemp)"
 download_headers="$(mktemp)"
-trap 'rm -f "${preflight_headers}" "${search_result}" "${download_headers}"' EXIT
+file_report="$(mktemp)"
+upload_headers="$(mktemp)"
+trap 'rm -f "${preflight_headers}" "${search_result}" "${download_headers}" "${file_report}" "${upload_headers}"' EXIT
 preflight_status="$(curl --silent --output /dev/null --dump-header "${preflight_headers}" \
   --write-out '%{http_code}' -X OPTIONS \
   -H "Origin: ${frontend_origin}" \
@@ -176,3 +180,114 @@ if ! printf '%s' "${ttl}" | jq -e \
   exit 1
 fi
 echo "S3 one-day expiration and DynamoDB TTL are enabled."
+
+echo "Checking direct CSV upload and S3 event processing..."
+file_start="$(curl --fail-with-body --silent --show-error \
+  -X POST \
+  -H "Authorization: Bearer ${token}" \
+  -H "Content-Type: application/json" \
+  --data '{"fileName":"employees.csv"}' \
+  "${base_url}/api/file-jobs")"
+file_job_id="$(printf '%s' "${file_start}" | jq -er '.jobId')"
+upload_url="$(printf '%s' "${file_start}" | jq -er '.uploadUrl')"
+if [[ "${upload_url}" != http://localhost:4566/* || "${upload_url}" != *"X-Amz-Expires=300"* ]]; then
+  echo "Expected a five-minute Floci upload URL, got ${upload_url}" >&2
+  exit 1
+fi
+
+upload_preflight_status="$(curl --silent --output /dev/null --dump-header "${upload_headers}" \
+  --write-out '%{http_code}' -X OPTIONS \
+  -H "Origin: ${frontend_origin}" \
+  -H "Access-Control-Request-Method: PUT" \
+  -H "Access-Control-Request-Headers: content-type" \
+  "${upload_url}")"
+if [[ "${upload_preflight_status}" != "200" && "${upload_preflight_status}" != "204" ]]; then
+  echo "Expected S3 upload preflight 200 or 204, got ${upload_preflight_status}" >&2
+  exit 1
+fi
+if ! tr -d '\r' < "${upload_headers}" |
+  grep -qi "^Access-Control-Allow-Origin: ${frontend_origin}$"; then
+  echo "S3 upload preflight did not allow ${frontend_origin}" >&2
+  exit 1
+fi
+
+curl --fail-with-body --silent --show-error \
+  -X PUT \
+  -H "Origin: ${frontend_origin}" \
+  -H "Content-Type: text/csv" \
+  --data-binary $'employeeId,name,department\n1,Alice,engineering\n2,Bob,sales\n3,Carol,operations\n' \
+  "${upload_url}"
+
+file_state=""
+file_response=""
+for _ in {1..30}; do
+  file_response="$(curl --fail-with-body --silent --show-error \
+    -H "Authorization: Bearer ${token}" \
+    "${base_url}/api/file-jobs/${file_job_id}")"
+  file_state="$(printf '%s' "${file_response}" | jq -er '.status')"
+  if [[ "${file_state}" == "COMPLETED" || "${file_state}" == "FAILED" ]]; then
+    break
+  fi
+  sleep 1
+done
+if [[ "${file_state}" != "COMPLETED" ]]; then
+  echo "Expected file ingest to complete, got ${file_state}" >&2
+  printf '%s\n' "${file_response}" >&2
+  exit 1
+fi
+if ! printf '%s' "${file_response}" | jq -e \
+  '.rowCount == 3 and .columnCount == 3 and .columns == ["employeeId", "name", "department"]' \
+  >/dev/null; then
+  echo "File ingest summary was not the expected 3-row, 3-column result." >&2
+  exit 1
+fi
+
+report_url="$(printf '%s' "${file_response}" | jq -er '.reportUrl')"
+curl --fail-with-body --silent --show-error --output "${file_report}" "${report_url}"
+if ! jq -e \
+  '.RowCount == 3 and .ColumnCount == 3 and .Columns == ["employeeId", "name", "department"]' \
+  "${file_report}" >/dev/null; then
+  echo "Downloaded file processing report was not valid." >&2
+  exit 1
+fi
+echo "File job ${file_job_id} completed through S3 Event -> SQS -> Lambda."
+
+echo "Checking file job ownership and authorization..."
+other_file_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  -H "Authorization: Bearer local:user-003" \
+  "${base_url}/api/file-jobs/${file_job_id}")"
+if [[ "${other_file_status}" != "404" ]]; then
+  echo "Expected another user to receive 404 for the file job, got ${other_file_status}" >&2
+  exit 1
+fi
+denied_file_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  -X POST \
+  -H "Authorization: Bearer local:user-002" \
+  -H "Content-Type: application/json" \
+  --data '{"fileName":"denied.csv"}' \
+  "${base_url}/api/file-jobs")"
+if [[ "${denied_file_status}" != "403" ]]; then
+  echo "Expected user without file ingest access to receive 403, got ${denied_file_status}" >&2
+  exit 1
+fi
+
+echo "Checking file ingest retention settings..."
+file_lifecycle="$(AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=ap-northeast-1 \
+  aws --endpoint-url http://localhost:4566 s3api get-bucket-lifecycle-configuration \
+  --bucket "${file_bucket}")"
+if ! printf '%s' "${file_lifecycle}" | jq -e \
+  '.Rules[] | select(.ID == "expire-temporary-file-ingest-data" and .Status == "Enabled" and .Expiration.Days == 1)' \
+  >/dev/null; then
+  echo "Expected the one-day file ingest S3 expiration rule to be enabled." >&2
+  exit 1
+fi
+file_ttl="$(AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=ap-northeast-1 \
+  aws --endpoint-url http://localhost:4566 dynamodb describe-time-to-live \
+  --table-name "${file_table}")"
+if ! printf '%s' "${file_ttl}" | jq -e \
+  '.TimeToLiveDescription | select(.TimeToLiveStatus == "ENABLED" and .AttributeName == "expiresAt")' \
+  >/dev/null; then
+  echo "Expected file job DynamoDB TTL to be enabled." >&2
+  exit 1
+fi
+echo "File ingest S3 one-day expiration and DynamoDB TTL are enabled."

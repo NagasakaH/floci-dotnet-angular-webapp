@@ -10,6 +10,7 @@ variable "authorizer_lambda_runtime" {
 variable "hello_zip" { type = string }
 variable "authorizer_zip" { type = string }
 variable "search_jobs_zip" { type = string }
+variable "file_ingest_zip" { type = string }
 variable "cors_allow_origin" {
   type        = string
   description = "Exact CloudFront/Angular origin. Use * only for local PoC."
