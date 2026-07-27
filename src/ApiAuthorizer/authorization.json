@@ -73,6 +73,20 @@
         }
       ]
     },
+    "search-job-users": {
+      "description": "Users allowed to create and read their own asynchronous search jobs",
+      "members": {
+        "users": ["user-003"],
+        "userGroups": ["engineering-employees"],
+        "identityProviderGroups": ["hello-readers"]
+      },
+      "permissions": [
+        {
+          "actions": ["GET", "POST"],
+          "resources": ["/api/search-jobs", "/api/search-jobs/*"]
+        }
+      ]
+    },
     "tokyo-health-readers": {
       "description": "Example of an access group using a user group",
       "members": {

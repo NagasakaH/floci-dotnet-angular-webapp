@@ -5,3 +5,11 @@ output "aws_invoke_url" {
 }
 
 data "aws_region" "current" {}
+
+output "search_results_bucket" {
+  value = aws_s3_bucket.search_results.id
+}
+
+output "search_jobs_table" {
+  value = aws_dynamodb_table.search_jobs.name
+}

@@ -96,5 +96,69 @@
     </div>
   </section>
 
+  <section class="panel async-panel">
+    <div class="section-heading">
+      <div><p class="step">ASYNC PATTERN</p><h2>非同期検索とS3一時ダウンロード</h2></div>
+      <span class="method async-method">POST → POLLING</span>
+    </div>
+    <div class="async-grid">
+      <div class="search-form">
+        <label for="search-query">20,000件のサンプル社員データを検索</label>
+        <div class="search-input-row">
+          <input
+            id="search-query"
+            type="search"
+            [value]="searchQuery()"
+            (input)="searchQuery.set($any($event.target).value)"
+            placeholder="engineering / tokyo / Alice / EMP-00042"
+          />
+          <button
+            class="execute search-execute"
+            (click)="startSearch()"
+            [disabled]="searchLoading() || !apiBaseUrl() || (isAws() && !authSession())"
+          >
+            @if (searchLoading()) { <span class="spinner"></span> 処理中… }
+            @else { 検索ジョブを開始 <span>→</span> }
+          </button>
+        </div>
+        <p class="search-note">
+          APIは202を返し、SQSワーカーが検索結果をS3へ出力します。
+          画面はジョブ状態をポーリングし、完了時に5分間有効な署名URLを受け取ります。
+        </p>
+        <div class="async-flow" aria-label="asynchronous search architecture">
+          <span>Angular</span><b>→</b><span>API</span><b>→</b><span>SQS</span><b>→</b>
+          <span>Worker</span><b>→</b><span>S3</span>
+        </div>
+      </div>
+      <div class="job-status" [class.completed]="searchJob()?.status === 'COMPLETED'" [class.failed]="searchError()">
+        <div class="response-header">
+          <span>JOB STATUS</span>
+          <strong>{{ searchJob()?.status || 'WAITING' }}</strong>
+        </div>
+        @if (searchJob(); as job) {
+          <dl>
+            <div><dt>Job ID</dt><dd>{{ job.jobId }}</dd></div>
+            <div><dt>Query</dt><dd>{{ job.query }}</dd></div>
+            <div><dt>Scanned</dt><dd>{{ job.scannedRecords }} records</dd></div>
+            <div><dt>Results</dt><dd>{{ job.resultCount }}</dd></div>
+          </dl>
+          @if (job.downloadUrl) {
+            <a class="download" [href]="job.downloadUrl" target="_blank" rel="noopener">
+              CSVを署名URLからダウンロード <span>↗</span>
+            </a>
+            <small class="expiry">URL有効期限: {{ job.downloadExpiresAt }}</small>
+          }
+        } @else if (searchError()) {
+          <p class="error">{{ searchError() }}</p>
+        } @else {
+          <p class="placeholder">検索条件を入力してジョブを開始してください。</p>
+        }
+        @if (searchError() && searchJob()) {
+          <p class="error">{{ searchError() }}</p>
+        }
+      </div>
+    </div>
+  </section>
+
   <footer><span>Angular 22</span><span>Node.js 26</span><span>Go Authorizer</span><span>.NET Lambda</span><span>Terraform + Floci</span></footer>
 </main>

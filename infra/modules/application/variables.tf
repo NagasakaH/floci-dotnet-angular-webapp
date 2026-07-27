@@ -9,6 +9,7 @@ variable "authorizer_lambda_runtime" {
 }
 variable "hello_zip" { type = string }
 variable "authorizer_zip" { type = string }
+variable "search_jobs_zip" { type = string }
 variable "cors_allow_origin" {
   type        = string
   description = "Exact CloudFront/Angular origin. Use * only for local PoC."
@@ -36,4 +37,14 @@ variable "enable_gateway_responses" {
   type        = bool
   description = "Create API Gateway UNAUTHORIZED/ACCESS_DENIED responses. Disable for emulators that do not implement PutGatewayResponse."
   default     = true
+}
+variable "aws_service_endpoint" {
+  type        = string
+  description = "AWS-compatible endpoint reachable from Lambda containers. Empty uses AWS."
+  default     = ""
+}
+variable "public_s3_endpoint" {
+  type        = string
+  description = "S3 endpoint embedded in local presigned URLs. Empty uses the AWS S3 endpoint."
+  default     = ""
 }

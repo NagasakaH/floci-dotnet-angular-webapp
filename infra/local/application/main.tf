@@ -15,8 +15,19 @@ module "application" {
   name_prefix                      = "floci-poc-${terraform.workspace}"
   hello_zip                        = abspath("${path.module}/../../artifacts/hello.zip")
   authorizer_zip                   = abspath("${path.module}/../../artifacts/authorizer.zip")
+  search_jobs_zip                  = abspath("${path.module}/../../artifacts/search-jobs.zip")
   cors_allow_origin                = local.config.frontend_origin
   stage_name                       = terraform.workspace
   integration_timeout_milliseconds = 50
   enable_gateway_responses         = false
+  aws_service_endpoint             = "http://floci:4566"
+  public_s3_endpoint               = "http://localhost:4566"
+}
+
+output "search_results_bucket" {
+  value = module.application.search_results_bucket
+}
+
+output "search_jobs_table" {
+  value = module.application.search_jobs_table
 }

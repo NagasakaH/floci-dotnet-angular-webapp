@@ -160,7 +160,7 @@ resource "aws_api_gateway_gateway_response" "unauthorized" {
   status_code   = "401"
   response_parameters = {
     "gatewayresponse.header.Access-Control-Allow-Headers" = "'Authorization,Content-Type'"
-    "gatewayresponse.header.Access-Control-Allow-Methods" = "'GET,OPTIONS'"
+    "gatewayresponse.header.Access-Control-Allow-Methods" = "'GET,POST,OPTIONS'"
     "gatewayresponse.header.Access-Control-Allow-Origin"  = "'${var.cors_allow_origin}'"
     "gatewayresponse.header.Vary"                         = "'Origin'"
   }
@@ -176,7 +176,7 @@ resource "aws_api_gateway_gateway_response" "access_denied" {
   status_code   = "403"
   response_parameters = {
     "gatewayresponse.header.Access-Control-Allow-Headers" = "'Authorization,Content-Type'"
-    "gatewayresponse.header.Access-Control-Allow-Methods" = "'GET,OPTIONS'"
+    "gatewayresponse.header.Access-Control-Allow-Methods" = "'GET,POST,OPTIONS'"
     "gatewayresponse.header.Access-Control-Allow-Origin"  = "'${var.cors_allow_origin}'"
     "gatewayresponse.header.Vary"                         = "'Origin'"
   }
@@ -226,6 +226,12 @@ resource "aws_api_gateway_deployment" "this" {
       access_denied_gateway_response   = try(aws_api_gateway_gateway_response.access_denied[0].id, "")
       cognito_issuer                   = var.cognito_issuer
       cognito_client_id                = var.cognito_client_id
+      search_start_method              = aws_api_gateway_method.search_start.id
+      search_start_integration         = aws_api_gateway_integration.search_start.id
+      search_status_method             = aws_api_gateway_method.search_status.id
+      search_status_integration        = aws_api_gateway_integration.search_status.id
+      search_cors                      = [for item in aws_api_gateway_integration_response.search_options : item.id]
+      search_worker_mapping            = aws_lambda_event_source_mapping.search_worker.uuid
     }))
   }
   lifecycle { create_before_destroy = true }

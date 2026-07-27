@@ -8,8 +8,11 @@ provider "aws" {
 
   endpoints {
     apigateway = local.config.floci_endpoint
+    dynamodb   = local.config.floci_endpoint
     iam        = local.config.floci_endpoint
     lambda     = local.config.floci_endpoint
+    s3         = local.config.floci_endpoint
+    sqs        = local.config.floci_endpoint
     sts        = local.config.floci_endpoint
   }
 }

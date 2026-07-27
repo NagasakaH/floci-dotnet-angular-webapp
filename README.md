@@ -10,7 +10,7 @@ Floci上に、Terraformだけで次の最小構成を作るPoCです。
 - .NET SDK 8
 - Go 1.22+
 - Terraform 1.8+
-- `zip` と `curl`
+- AWS CLI、`zip`、`curl`、`jq`
 
 ## 実行
 
@@ -121,6 +121,114 @@ tokenのRS256署名、issuer、client ID、token種別、発行時刻、有効�
 Go Authorizerは外部ライブラリに依存せず、標準ライブラリだけでLambda Runtime APIを
 実装しています。`authorization.json`はLambda成果物へ同梱され、起動時に検証・読込されます。
 JSON変更を反映するにはAuthorizerを再ビルド・再デプロイします。
+
+## 非同期検索 + S3一時ダウンロード
+
+API Gatewayのバリエーションとして、同期APIではタイムアウトしやすい検索・帳票出力を
+バックグラウンド処理するサンプルを実装しています。
+
+```text
+Angular
+  | POST /api/search-jobs                    Authorization: Bearer <token>
+  v
+API Gateway -> Go Authorizer -> Search API Lambda (.NET)
+                                      | DynamoDBへQUEUEDを保存
+                                      v
+                                     SQS
+                                      v
+                              Search Worker Lambda (.NET)
+                                      | 20,000件を検索してCSVを出力
+                                      +----> private S3 bucket
+                                      |
+                                      +----> DynamoDBをCOMPLETEDへ更新
+
+Angular
+  | GET /api/search-jobs/{jobId} をポーリング
+  v
+Search API Lambda -> 完了時だけ5分間有効なS3署名URLを返す
+```
+
+開始APIはすぐに`202 Accepted`を返します。
+
+```http
+POST /api/search-jobs
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{"query":"engineering","maxResults":250}
+```
+
+```json
+{
+  "jobId": "8c581a6915a648bbba315e82c2d4c97c",
+  "status": "QUEUED",
+  "statusUrl": "/api/search-jobs/8c581a6915a648bbba315e82c2d4c97c"
+}
+```
+
+フロントエンドへの完了通知は、最初の実装ではFlociと実AWSの両方で扱いやすい
+**短間隔ポーリング**にしています。Angularは`QUEUED` / `RUNNING`の間だけGETし、
+`COMPLETED`または`FAILED`で停止します。WebSocketの接続・再接続や接続ID管理を
+持たないため、この規模のPoCでは動作差分を小さくできます。
+
+一時データには次の防御を入れています。
+
+- S3 bucketは非公開で、公開ACL/公開bucket policyをブロック
+- Search APIとWorkerはIAM Roleを分離し、S3/SQS/DynamoDBを用途別の最小権限に限定
+- ダウンロードURLは要求の都度生成し、有効期間は最大5分
+- URLを取得できるのはジョブを作成したユーザーだけ。他ユーザーには`404`を返す
+- ジョブ作成から1日後はAPIが`410 Gone`を返し、新しいURLを発行しない
+- S3の`results/`は1日でExpiration、不完全なmultipart uploadも1日で中止
+- DynamoDBのジョブメタデータも`expiresAt` TTLで削除
+- Worker失敗時は最大3回処理し、その後はDLQへ退避
+
+S3 LifecycleとDynamoDB TTLは非同期削除であり、指定時刻ぴったりの物理削除を保証する
+機能ではありません。そのため、利用期限はAPIでも即時判定し、物理データの後片付けを
+Lifecycle/TTLへ任せています。署名URLは秘密情報と同じ扱いにし、ログや永続ストレージへ
+保存しないでください。AngularもURLを画面表示中だけ保持します。
+
+CSVリンクはS3を別オリジンとして新しいタブで直接開くため、Angularがレスポンス本文を
+読むためのS3 CORSは不要です。将来`HttpClient`でCSVを読み込む場合は、S3 bucket側にも
+CloudFront originを完全一致で許可するCORS設定が必要です。
+
+Floci 1.5.33では、TerraformによるS3 Lifecycle、DynamoDB TTL、SQS/DLQ、
+SQS Lambda event source mapping、S3署名URLを実際に構築し、
+`make smoke`で次を確認済みです。
+
+- Authorizerで許可されたユーザーによるジョブ作成
+- SQSからWorker Lambdaを起動し、20,000件を走査
+- DynamoDBの`QUEUED`から`COMPLETED`への状態更新
+- private S3へのCSV保存と5分署名URLによる実ダウンロード
+- 別ユーザーによるジョブ参照の拒否、権限なしユーザーによるジョブ作成の拒否
+- S3の1日Expiration設定とDynamoDB TTL設定
+
+24時間待つ物理削除テストは通常のsmokeには含めず、設定APIとアプリ側の期限判定までを
+ローカルで確認します。Flociのコンテナを再作成するとメモリ上のデータはすべて消えます。
+
+参考:
+
+- [Floci](https://github.com/floci-io/floci)
+- [Floci compatibility tests](https://github.com/floci-io/floci-compatibility-tests)
+- [Amazon S3 presigned URL](https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html)
+- [Amazon S3 Lifecycle Expiration](https://docs.aws.amazon.com/AmazonS3/latest/API/API_LifecycleExpiration.html)
+
+### 次に追加しやすいAPIパターン
+
+優先度順では次のサンプルが有用です。
+
+1. **署名付きupload + S3 Event**: 大きな入力ファイルをAPI Gateway/Lambda経由にせず
+   S3へ直接uploadし、S3 Eventから検証・変換Lambdaを起動するパターン
+2. **Step Functionsによる複数段処理**: 検索、集計、CSV生成、通知を分け、再試行箇所と
+   実行履歴を明確にする長時間ワークフロー
+3. **WebSocket完了通知**: ポーリングの代わりにAPI Gateway WebSocketで完了イベントを
+   pushするパターン。実AWS向けの価値は高い一方、Floci互換性は個別PoCが必要
+4. **Webhook / EventBridge通知**: ブラウザではなく外部システムへ完了を通知し、
+   署名検証、冪等性、再送を確認するパターン
+5. **Athena非同期クエリ**: 大きなS3データをLambdaメモリへ読み込まず検索し、
+   QueryExecutionIdを現在のジョブAPIと同じ形で追跡するパターン
+
+次の一手としては、現在のdownloadフローと対になる「署名付きupload + S3 Event」が
+再利用性とFlociでの検証価値のバランスが最も良いです。
 
 ## CloudFrontとAPI Gatewayが別ドメインになる点
 
@@ -306,6 +414,7 @@ Lambda@EdgeはAWS仕様により`us-east-1`へ番号付きversionとして作成
 
 - `src/ApiAuthorizer`: Goによる認証とJSONベースのAPI resource/action認可
 - `src/HelloApi`: API Gateway proxy Lambda
+- `src/SearchJobs`: 非同期検索API、SQS Worker、S3署名URL発行を行う.NET Lambda
 - `frontend`: Angular 22による認証・認可確認用サンプル画面
 - `infra/modules/application`: local/AWS共有Terraform Module
 - `infra/local/application`: AWSに接続しないFloci用rootとlocal state
@@ -337,6 +446,11 @@ Flociの呼出しURLはLocalStack互換形式
 CloudFront/S3/Cognito/Lambda@Edgeログインゲートは実AWSへ実装済みです。
 Lambda@Edgeのグローバル複製、Cognito managed login、Cookie統合は実AWSで確認し、
 認証ロジック本体はNode.js単体テストで検証します。これらはFlociの再現対象外です。
+
+非同期検索はFloci上でAPI Gateway、Authorizer、Lambda、DynamoDB、SQS event source、
+S3保存、署名URLダウンロードまで確認済みです。S3 Lifecycleの設定APIも互換ですが、
+実時間経過後の削除タイミング、SQS/Lambdaの大規模並列実行、DLQの運用アラームは
+最終的に実AWSで確認します。
 
 Floci 1.5.33はAPI Gateway integrationの `timeout_milliseconds` を読取時に `0` と返すため、
 2回目以降の `terraform plan` では `0 -> 50` の既知差分が表示されます。これはFlociの

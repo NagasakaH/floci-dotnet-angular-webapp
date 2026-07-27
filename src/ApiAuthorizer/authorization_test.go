@@ -14,6 +14,7 @@ import (
 )
 
 const helloARN = "arn:aws:execute-api:ap-northeast-1:000000000000:id/dev/GET/api/hello"
+const searchARN = "arn:aws:execute-api:ap-northeast-1:000000000000:id/dev/POST/api/search-jobs"
 
 func testEngine(t *testing.T) authorizationEngine {
 	t.Helper()
@@ -72,6 +73,24 @@ func TestIdentityProviderGroupGrant(t *testing.T) {
 	allowed, groups := testEngine(t).authorizeIdentity(identity, helloARN)
 	if !allowed || !contains(groups, "hello-readers") {
 		t.Fatalf("allowed=%v groups=%v", allowed, groups)
+	}
+}
+
+func TestSearchJobPermissions(t *testing.T) {
+	engine := testEngine(t)
+	for _, arn := range []string{
+		searchARN,
+		"arn:aws:execute-api:ap-northeast-1:000000000000:id/dev/GET/api/search-jobs/job-1",
+	} {
+		if allowed, groups := engine.authorize("user-001", arn); !allowed || !contains(groups, "search-job-users") {
+			t.Fatalf("arn=%s allowed=%v groups=%v", arn, allowed, groups)
+		}
+	}
+	if allowed, _ := engine.authorize(
+		"user-002",
+		"arn:aws:execute-api:ap-northeast-1:000000000000:id/dev/POST/api/search-jobs",
+	); allowed {
+		t.Fatal("user-002 must not create search jobs")
 	}
 }
 
