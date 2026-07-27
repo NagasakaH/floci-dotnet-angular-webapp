@@ -42,6 +42,7 @@ module "application" {
   authorizer_zip                   = abspath("${path.module}/../../artifacts/authorizer.zip")
   search_jobs_zip                  = abspath("${path.module}/../../artifacts/search-jobs.zip")
   file_ingest_zip                  = abspath("${path.module}/../../artifacts/file-ingest.zip")
+  authentication_mode              = "cognito"
   cors_allow_origin                = data.aws_ssm_parameter.frontend_origin.value
   cognito_issuer                   = data.aws_ssm_parameter.cognito_issuer.value
   cognito_client_id                = data.aws_ssm_parameter.cognito_client_id.value

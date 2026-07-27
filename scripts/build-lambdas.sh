@@ -32,9 +32,18 @@ cp "${repo_dir}/src/ApiAuthorizer/authorization.json" "${authorizer_dir}/authori
 # Stable timestamps keep source_code_hash unchanged when source output is unchanged.
 find "${hello_dir}" "${authorizer_dir}" "${search_jobs_dir}" "${file_ingest_dir}" \
   -type f -exec touch -t 198001010000 {} +
-(cd "${hello_dir}" && zip -q -FS -r ../hello.zip .)
-(cd "${authorizer_dir}" && zip -q -FS -r ../authorizer.zip .)
-(cd "${search_jobs_dir}" && zip -q -FS -r ../search-jobs.zip .)
-(cd "${file_ingest_dir}" && zip -q -FS -r ../file-ingest.zip .)
+
+# Recreate archives instead of updating them in place. `zip -FS` compares file
+# size and timestamp, so a changed Go binary with the same size and normalized
+# timestamp could otherwise leave stale Lambda code in the archive.
+rm -f \
+  "${artifacts_dir}/hello.zip" \
+  "${artifacts_dir}/authorizer.zip" \
+  "${artifacts_dir}/search-jobs.zip" \
+  "${artifacts_dir}/file-ingest.zip"
+(cd "${hello_dir}" && zip -q -r ../hello.zip .)
+(cd "${authorizer_dir}" && zip -q -r ../authorizer.zip .)
+(cd "${search_jobs_dir}" && zip -q -r ../search-jobs.zip .)
+(cd "${file_ingest_dir}" && zip -q -r ../file-ingest.zip .)
 
 echo "Lambda packages created under infra/artifacts."

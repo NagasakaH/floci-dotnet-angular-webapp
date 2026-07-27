@@ -13,6 +13,7 @@ namespace FileIngest;
 public sealed class ApiFunction
 {
     private const string CsvContentType = "text/csv";
+    private const string RequiredAccessGroup = "file-ingest-users";
     private readonly IAmazonDynamoDB _dynamoDb;
     private readonly IAmazonS3 _publicS3;
     private readonly string _tableName;
@@ -65,11 +66,16 @@ public sealed class ApiFunction
             return Response(400, new { message = "fileName must be a .csv name between 5 and 120 characters." });
         }
 
-        var ownerUserId = ReadUserId(request);
-        if (ownerUserId is null)
+        var authorization = ReadAuthorization(request);
+        if (authorization.UserId is null)
         {
             return Response(401, new { message = "Authenticated user context is missing." });
         }
+        if (!authorization.HasFileIngestPermission)
+        {
+            return Response(403, new { message = "File ingest permission is missing." });
+        }
+        var ownerUserId = authorization.UserId;
 
         var now = DateTimeOffset.UtcNow;
         var jobId = Guid.NewGuid().ToString("N");
@@ -120,11 +126,20 @@ public sealed class ApiFunction
     {
         request.PathParameters ??= new Dictionary<string, string>();
         request.PathParameters.TryGetValue("jobId", out var jobId);
-        var ownerUserId = ReadUserId(request);
-        if (string.IsNullOrWhiteSpace(jobId) || ownerUserId is null)
+        var authorization = ReadAuthorization(request);
+        if (string.IsNullOrWhiteSpace(jobId))
         {
             return Response(400, new { message = "jobId is required." });
         }
+        if (authorization.UserId is null)
+        {
+            return Response(401, new { message = "Authenticated user context is missing." });
+        }
+        if (!authorization.HasFileIngestPermission)
+        {
+            return Response(403, new { message = "File ingest permission is missing." });
+        }
+        var ownerUserId = authorization.UserId;
 
         var result = await _dynamoDb.GetItemAsync(new GetItemRequest
         {
@@ -205,15 +220,27 @@ public sealed class ApiFunction
             IsBase64Encoded = false
         };
 
-    private static string? ReadUserId(APIGatewayProxyRequest request)
+    private static AuthorizationContext ReadAuthorization(APIGatewayProxyRequest request)
     {
         var authorizer = request.RequestContext?.Authorizer;
-        return authorizer is not null && authorizer.TryGetValue("userId", out var value)
-            ? value?.ToString()
-            : null;
+        if (authorizer is null || !authorizer.TryGetValue("userId", out var userIdValue))
+        {
+            return new(null, false);
+        }
+
+        var accessGroups = authorizer.TryGetValue("accessRightGroups", out var groupsValue)
+            ? groupsValue?.ToString()?.Split(
+                ',',
+                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            : [];
+        return new(
+            userIdValue?.ToString(),
+            accessGroups?.Contains(RequiredAccessGroup, StringComparer.Ordinal) == true);
     }
 
     private static string RequiredEnvironment(string name) =>
         Environment.GetEnvironmentVariable(name) ??
         throw new InvalidOperationException($"{name} is not set.");
+
+    private sealed record AuthorizationContext(string? UserId, bool HasFileIngestPermission);
 }

@@ -49,6 +49,7 @@ resource "aws_lambda_function" "authorizer" {
   timeout          = 15
   environment {
     variables = {
+      AUTH_MODE         = var.authentication_mode
       FUNCTION_KIND     = "token-authorizer"
       COGNITO_ISSUER    = var.cognito_issuer
       COGNITO_CLIENT_ID = var.cognito_client_id

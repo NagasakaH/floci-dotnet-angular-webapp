@@ -18,12 +18,13 @@ import (
 )
 
 type tokenAuthenticator struct {
-	issuer   string
-	clientID string
-	jwksURL  string
-	client   *http.Client
-	mu       *sync.Mutex
-	keys     map[string]*rsa.PublicKey
+	allowLocalTokens bool
+	issuer           string
+	clientID         string
+	jwksURL          string
+	client           *http.Client
+	mu               *sync.Mutex
+	keys             map[string]*rsa.PublicKey
 }
 
 type jwtClaims struct {
@@ -52,19 +53,34 @@ type jsonWebKey struct {
 }
 
 func newTokenAuthenticatorFromEnvironment() (tokenAuthenticator, error) {
+	authMode := strings.TrimSpace(os.Getenv("AUTH_MODE"))
 	issuer := strings.TrimSuffix(os.Getenv("COGNITO_ISSUER"), "/")
 	clientID := os.Getenv("COGNITO_CLIENT_ID")
-	if (issuer == "") != (clientID == "") {
-		return tokenAuthenticator{}, errors.New("COGNITO_ISSUER and COGNITO_CLIENT_ID must be set together")
+	switch authMode {
+	case "local":
+		if issuer != "" || clientID != "" {
+			return tokenAuthenticator{}, errors.New("local AUTH_MODE must not configure Cognito")
+		}
+	case "cognito":
+		if issuer == "" || clientID == "" {
+			return tokenAuthenticator{}, errors.New("cognito AUTH_MODE requires COGNITO_ISSUER and COGNITO_CLIENT_ID")
+		}
+	default:
+		return tokenAuthenticator{}, errors.New("AUTH_MODE must be local or cognito")
 	}
 	return tokenAuthenticator{
-		issuer: issuer, clientID: clientID, jwksURL: issuer + "/.well-known/jwks.json",
-		client: &http.Client{Timeout: 3 * time.Second}, mu: &sync.Mutex{}, keys: map[string]*rsa.PublicKey{},
+		allowLocalTokens: authMode == "local",
+		issuer:           issuer,
+		clientID:         clientID,
+		jwksURL:          issuer + "/.well-known/jwks.json",
+		client:           &http.Client{Timeout: 3 * time.Second},
+		mu:               &sync.Mutex{},
+		keys:             map[string]*rsa.PublicKey{},
 	}, nil
 }
 
 func (a tokenAuthenticator) authenticate(value string, engine authorizationEngine) (authenticatedIdentity, error) {
-	if userID, ok := extractLocalUserID(value); ok {
+	if userID, ok := extractLocalUserID(value); ok && a.allowLocalTokens {
 		user, exists := engine.identity(userID)
 		if !exists {
 			return authenticatedIdentity{}, errors.New("unknown local user")

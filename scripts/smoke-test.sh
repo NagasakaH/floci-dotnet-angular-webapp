@@ -17,7 +17,8 @@ search_result="$(mktemp)"
 download_headers="$(mktemp)"
 file_report="$(mktemp)"
 upload_headers="$(mktemp)"
-trap 'rm -f "${preflight_headers}" "${search_result}" "${download_headers}" "${file_report}" "${upload_headers}"' EXIT
+file_auth_response="$(mktemp)"
+trap 'rm -f "${preflight_headers}" "${search_result}" "${download_headers}" "${file_report}" "${upload_headers}" "${file_auth_response}"' EXIT
 preflight_status="$(curl --silent --output /dev/null --dump-header "${preflight_headers}" \
   --write-out '%{http_code}' -X OPTIONS \
   -H "Origin: ${frontend_origin}" \
@@ -180,6 +181,23 @@ if ! printf '%s' "${ttl}" | jq -e \
   exit 1
 fi
 echo "S3 one-day expiration and DynamoDB TTL are enabled."
+
+echo "Checking File API defense-in-depth authorization..."
+AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=ap-northeast-1 \
+  aws --endpoint-url http://localhost:4566 lambda invoke \
+  --function-name floci-poc-dev-file-api \
+  --cli-binary-format raw-in-base64-out \
+  --payload \
+  '{"httpMethod":"POST","body":"{\"fileName\":\"missing-permission.csv\"}","requestContext":{"authorizer":{"userId":"synthetic-user","accessRightGroups":"hello-readers"}}}' \
+  "${file_auth_response}" >/dev/null
+if ! jq -e \
+  '.statusCode == 403 and (.body | fromjson | .message == "File ingest permission is missing.")' \
+  "${file_auth_response}" >/dev/null; then
+  echo "Expected File API to reject an Authorizer context without file-ingest-users." >&2
+  cat "${file_auth_response}" >&2
+  exit 1
+fi
+echo "File API rejected a context without file-ingest-users."
 
 echo "Checking direct CSV upload and S3 event processing..."
 file_start="$(curl --fail-with-body --silent --show-error \

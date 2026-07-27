@@ -66,6 +66,43 @@ func TestLocalTokenContainsOnlyUserID(t *testing.T) {
 	}
 }
 
+func TestLocalTokenRequiresExplicitLocalMode(t *testing.T) {
+	engine := testEngine(t)
+	if _, err := (tokenAuthenticator{}).authenticate("Bearer local:user-001", engine); err == nil {
+		t.Fatal("local token must be rejected unless local mode is explicitly enabled")
+	}
+	identity, err := (tokenAuthenticator{allowLocalTokens: true}).authenticate(
+		"Bearer local:user-001",
+		engine,
+	)
+	if err != nil || identity.UserID != "user-001" {
+		t.Fatalf("identity=%#v err=%v", identity, err)
+	}
+}
+
+func TestAuthenticationModeConfigurationIsFailClosed(t *testing.T) {
+	t.Setenv("AUTH_MODE", "")
+	t.Setenv("COGNITO_ISSUER", "")
+	t.Setenv("COGNITO_CLIENT_ID", "")
+	if _, err := newTokenAuthenticatorFromEnvironment(); err == nil {
+		t.Fatal("missing AUTH_MODE must be rejected")
+	}
+
+	t.Setenv("AUTH_MODE", "local")
+	local, err := newTokenAuthenticatorFromEnvironment()
+	if err != nil || !local.allowLocalTokens {
+		t.Fatalf("local=%#v err=%v", local, err)
+	}
+
+	t.Setenv("AUTH_MODE", "cognito")
+	t.Setenv("COGNITO_ISSUER", "https://issuer.example")
+	t.Setenv("COGNITO_CLIENT_ID", "client-id")
+	cognito, err := newTokenAuthenticatorFromEnvironment()
+	if err != nil || cognito.allowLocalTokens {
+		t.Fatalf("cognito=%#v err=%v", cognito, err)
+	}
+}
+
 func TestIdentityProviderGroupGrant(t *testing.T) {
 	identity := authenticatedIdentity{
 		UserID: "cognito-sub", Name: "demo@example.com",

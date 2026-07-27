@@ -17,6 +17,7 @@ module "application" {
   authorizer_zip                   = abspath("${path.module}/../../artifacts/authorizer.zip")
   search_jobs_zip                  = abspath("${path.module}/../../artifacts/search-jobs.zip")
   file_ingest_zip                  = abspath("${path.module}/../../artifacts/file-ingest.zip")
+  authentication_mode              = "local"
   cors_allow_origin                = local.config.frontend_origin
   stage_name                       = terraform.workspace
   integration_timeout_milliseconds = 50

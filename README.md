@@ -44,8 +44,11 @@ Authorization: Bearer local:<user-id>
 
 例: `local:user-001`
 
-これはJWTではなく、ローカル結合試験用です。AWS環境ではGo AuthorizerがCognito access
-tokenのRS256署名、issuer、client ID、token種別、発行時刻、有効期限を検証します。
+これはJWTではなく、`AUTH_MODE=local`のローカル結合試験でだけ有効です。
+AWS環境は`AUTH_MODE=cognito`で動作し、`Bearer local:<user-id>`を常に拒否します。
+Go AuthorizerはCognito access tokenのRS256署名、issuer、client ID、token種別、
+発行時刻、有効期限を検証します。認証モードは明示指定を必須とし、未指定やCognito設定との
+不整合がある場合はAuthorizerの初期化を失敗させます。
 
 ## JSONによるAPI認可
 
@@ -262,6 +265,11 @@ Content-Type: application/json
 レスポンスの`uploadUrl`へ、返された`requiredHeaders`を完全一致させてPUTします。
 このサンプルでは`Content-Type: text/csv`も署名対象です。
 
+PUT署名URLは、API GatewayのGo AuthorizerがCognito認証と
+`file-ingest-users`のリソース・操作認可を許可し、File API自身もAuthorizer contextの
+同じアクセス権グループを確認した場合にだけ発行します。S3へのPUTではBearer tokenを
+再送せず、5分間の署名URLそのものを委譲された認証情報として扱います。
+
 ```json
 {
   "jobId": "638fc2a66c9044a2b02066dbf4c5631a",
@@ -426,7 +434,9 @@ make frontend
 - Carol (`user-003`): 個別ユーザー権限でAllow
 - Bob (`user-002`): 権限がないためDeny
 
-本番のCognito access tokenとは異なり、`Bearer local:<user-id>`はPoC専用です。
+本番のCognito access tokenとは異なり、`Bearer local:<user-id>`は
+`AUTH_MODE=local`のPoC専用です。AWSは`AUTH_MODE=cognito`に固定し、
+ローカルトークンを受け入れません。
 ブラウザは`localhost:4200`から`localhost:4566`へ別オリジンでアクセスし、
 実装済みのCORSプリフライトと`Authorization`ヘッダー送信も確認します。
 
